@@ -1,0 +1,1721 @@
+---
+title: "CMC analysis"
+author: "Christer Sylvén"
+date: '20220129'
+output: 
+  html_document:
+    self_contained: true
+    highlight: tango
+    df_print: paged
+    code_folding: hide
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: true  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(progress=TRUE,verbose=TRUE)
+knitr::opts_chunk$set(message=FALSE, warning=FALSE, #result='hold',fig.width=unit(18,"cm"), fig.height =unit(11,"cm"))
+result='hold',fig.width=12, fig.height =6)
+```
+Filtered count matrices for sqRNA and ST data from [ Asp et al 2019](https://www.spatialresearch.org). Further Asp et al 2019 preprocessed matrices obtained through this workflow. Saved as: data2/all_cells_count_matrix_filtered.tsv (scRNA) and data2/filtered_matrix.tsv (STdata). For ST maps cardiac background data file grobs.list is needed. Please contact authors.
+
+# UMAP of Asp et al 2019 data
+
+```{r}
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#  install.packages("BiocManager")
+
+#BiocManager::install("GSEABase")
+#BiocManager::install("AUCell")
+#BiocManager::install("doRNG")
+
+suppressPackageStartupMessages({
+  library(data.table)
+  library(Seurat)
+  #library(magrittr)
+  library(dplyr)
+  # library(biomaRt)
+  library(ggplot2)
+  library(cowplot)
+  library(plotly)
+  #library(DT)
+  # library(IRdisplay)
+  library(grid)
+  library(org.Hs.eg.db)
+  library(clusterProfiler)
+  library(GSEABase)
+  library(AUCell)
+  library(doRNG)
+  # library(repr)
+  # library(ggrepel)
+  # library(sctransform)
+  # library(gridExtra)
+  library(openxlsx)
+  library(reshape2)
+  library(readxl)
+  library(forcats)
+  library(patchwork)
+  library(corrplot)
+  library(data.table)
+  library(Seurat)
+  library(dplyr)
+# library(biomaRt)
+})
+
+setwd('/Users/ChristerSylven/Desktop/CMC_ms/GitHub_code/')
+extractTopN <- function(DE_genes, N = 5) {
+  subset(DE_genes, avg_log2FC > 0) %>% # Subset the data.frame to include only positive avg_logFC values
+    arrange(-avg_log2FC) %>% # Arrange the data.frame by decresing avg_logFC ("-" = decreasing)
+    group_by(cluster) %>% # Group the data.frame by cluster (this will produce a "grouped" data.frame, i.e. a subset for each cluster)
+    top_n(N, avg_log2FC) %>% # Extract top N rows for each cluster based on avg_logFC
+    arrange(cluster) 
+}
+
+# original filtered count matrices from Asp et al 2019: Count matrices are available at https://www.spatialresearch.org. Reporting 3777 cells
+seu_0 <- read.table(file = '/Users/ChristerSylven/Desktop/CMC_ms/GitHub_code/data2/all_cells_count_matrix_filtered.tsv',  sep = '\t', header = TRUE, stringsAsFactors=FALSE)
+rownames(seu_0) <- seu_0[,1]
+seu_0 <- seu_0[,-1]
+
+# 3717 cells used in Asp et al using Seurat 2.3
+Article_rownames <- readRDS('data/Article_rownames_SC.R')
+seu<- seu_0[,Article_rownames]
+dim(seu)
+seu <- CreateSeuratObject(counts = seu, project = "seu_SC", min.cells = 3, min.features = 200)
+#seu
+```
+
+### S_Figure 1
+
+```{r}
+# store mitochondrial percentage in object meta data
+seu[["percent.mt"]] <- PercentageFeatureSet(seu, pattern = "^MT-")
+seu <- subset(seu, subset = nFeature_RNA > 200 & nFeature_RNA < 6000 & nCount_RNA < 50000 & percent.mt < 20)
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+seu <- CellCycleScoring(seu, s.features = s.genes, g2m.features = g2m.genes,  set.ident = TRUE )
+seu <- SCTransform(seu,   assay = 'RNA',   new.assay.name = 'SCT',   vars.to.regress = c('percent.mt', 'S.Score', 'G2M.Score'), verbose = FALSE )
+seu <- RunPCA(seu, pcs = 30, verbose = FALSE)
+seu <- FindNeighbors(seu, dims = 1:30, verbose = FALSE)
+seu <- FindClusters(seu, resolution = 0.38, verbose = FALSE)
+#seu <- RunTSNE(seu, dims = 1:30,  tsne.method = "Rtsne")
+seu <- RunUMAP(seu, dims = 1:30, verbose = FALSE)
+#p1 <- DimPlot(seu, reduction = "tsne", pt.size = 0.25, cols = fill2, label='TRUE', repel='TRUE') + ggtitle(label = "t-SNE")
+fill2 = c('#1F77B4', '#AEC7E8', '#FF7F0E', '#FFBB78', '#2CA02C',  'red', '#F7B6D2', '#9467BD', '#D62728',  '#C5B0D5', '#8C564B', '#C49C94', 'green', '#E377C2',  '#BCBD22',  '#17BECF','#DBDB8D')
+
+# To get text annotation to add to UMAP figure
+#Asp et al 2019, modified by Seurat 3.0
+new.cluster.ids <- c(" 0  Endocardium/endothelium", #0
+                     " 1  Ventricular cardiomyocytes", #1 
+                     " 2  Epicardium-derived cells",
+                     " 3  Fibroblast-like (cardiac skeleton)",
+                     " 4  Fibroblast-like (smaller vascular development)",
+                     " 5  Erythrocytes", 
+                     " 6  Fibroblast-like (larger vascular development)",
+                     " 7  Fibroblast-like smooth muscle cells",
+                     " 8  Atrial cardiomyocytes",
+                     " 9  Endothel/pericytes/adventitia",
+                     "10  Smooth muscle cells/fibroblast-like",
+                     "11  Erythrocytes",
+                     "12  Epicardium",
+                     "13  MYOZ2-enriched cardiomyocytes Immune cells",
+                     "14  Immune cells",
+                     "15  Schwann progenitor cells",
+                     "16  Cardiac neural crest cells")
+```
+
+
+```{r}
+p2 <- DimPlot(seu, reduction = "umap",  cols = fill2, label.size = 6, pt.size = 1.5,  label='TRUE') + scale_color_manual(labels = new.cluster.ids, values = fill2) + labs(color = "")
+p2
+
+```
+
+# Umap of cardiomyocyte subclusters
+after subsetting the 3 original cardiomyocyte clusters analysed as new Seurat object with identical pipe.
+
+```{r}
+# analyse cardiomyocyte clusters with same setup. 
+Idents(seu) <- 'SCT_snn_res.0.38'
+seu_Muscle <- subset(seu, idents=c(1,8,13))
+#seu_Muscle
+#names(seu_Muscle[[]])
+# eliminate base cluster names w zero cells
+base_clusters  <- factor(seu_Muscle@meta.data[,11])
+#length(base_clusters)
+seu_Muscle <- seu_0[,rownames(seu_Muscle@meta.data)] # raw data from original counts file
+
+dim(seu_Muscle)
+
+```
+
+### Figure 1A
+
+```{r}
+seu_Muscle <- CreateSeuratObject(counts = seu_Muscle, project = "seu_Muscle_SC", min.cells = 3, min.features = 200)
+#seu_Muscle
+# store mitochondrial percentage in object meta data
+seu_Muscle <- PercentageFeatureSet(seu_Muscle, pattern = "^MT-", col.name = "percent.mt")
+seu_Muscle <- subset(seu_Muscle, subset = nFeature_RNA > 200 & nFeature_RNA < 6000 & nCount_RNA < 50000 & percent.mt < 20)
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+seu_Muscle <- CellCycleScoring(seu_Muscle, s.features = s.genes, g2m.features = g2m.genes,  set.ident = TRUE )
+seu_Muscle <- SCTransform(seu_Muscle,   assay = 'RNA',   new.assay.name = 'SCT',   vars.to.regress = c('percent.mt', 'S.Score', 'G2M.Score'), verbose = FALSE )
+seu_Muscle <- RunPCA(seu_Muscle, pcs = 30, verbose = FALSE)
+seu_Muscle <- FindNeighbors(seu_Muscle, dims = 1:30, verbose = FALSE)
+seu_Muscle <- FindClusters(seu_Muscle, resolution = 0.7, verbose = FALSE)
+seu_Muscle <- RunTSNE(seu_Muscle, dims = 1:30,  tsne.method = "Rtsne")
+seu_Muscle <- RunUMAP(seu_Muscle, dims = 1:30, verbose = FALSE)
+#DimPlot(seu_Muscle, reduction = "umap", pt.size = 0.25,  label.size =6, cols = fill2, label='TRUE') + ggtitle(label = "")
+
+seu_Muscle@meta.data$ClusterNames <- seu_Muscle@meta.data[,11]
+seu_Muscle@meta.data[,13] <- as.character(seu_Muscle@meta.data[,13])
+seu_Muscle@meta.data[,13][which(seu_Muscle@meta.data[,13]=='0')] <- 'Trabecular'
+seu_Muscle@meta.data[,13][which(seu_Muscle@meta.data[,13]=='1')] <- 'Compact'
+seu_Muscle@meta.data[,13][which(seu_Muscle@meta.data[,13]=='2')] <- 'Purkinje-related'
+seu_Muscle@meta.data[,13][which(seu_Muscle@meta.data[,13]=='3')] <- 'Atrial trabecular'
+seu_Muscle@meta.data[,13][which(seu_Muscle@meta.data[,13]=='4')] <- 'High G2M'
+seu_Muscle@meta.data[,13][which(seu_Muscle@meta.data[,13]=='5')] <- 'Atrial conduit'
+seu_Muscle@meta.data[,13][which(seu_Muscle@meta.data[,13]=='6')] <- 'Exosome-related'
+seu_Muscle@meta.data[,13][which(seu_Muscle@meta.data[,13]=='7')] <- 'Outflow tract'
+#seu_Muscle@meta.data[,13][which(seu_Muscle@meta.data[,13]=='8')] <- 'SAN'
+seu_Muscle@meta.data[,13] <- as.factor(seu_Muscle@meta.data[,13])
+
+seu_Muscle$base_clusters <- base_clusters
+
+
+fill4=c('darkmagenta', 'royalblue1', '#FF7F0E', 'maroon', 'blue','lightgreen', 'green',  'magenta', 'red','yellow',  'grey')
+
+# in order largest to smallest cluster
+seu_Muscle@meta.data$ClusterNames <- factor(seu_Muscle@meta.data$ClusterNames, levels = c('Trabecular','Compact',  'Purkinje-related','Atrial trabecular', 'High G2M',  'Atrial conduit','Exosome-related', 'Outflow tract'))
+
+Idents(seu_Muscle) <- 'ClusterNames'
+DimPlot(seu_Muscle, reduction = "umap", cols = fill4, pt.size = 2.0, label='F')
+```
+
+### Subsetting atrial clusters shown in UMAP and FeaturePlots
+
+Identifying SAN cells as defined as coexpression of TBX18, SHOX2 and HCN4 according to literature.
+
+```{r}
+# identify SAN cluster as cells coexpressing SHOX2, TBX18 and HCN4
+GOI.1 <- which(GetAssayData(object= seu_Muscle, slot = 'data')['SHOX2',] > 0 & GetAssayData(object=seu_Muscle, slot = 'data')['TBX18',] > 0 & GetAssayData(object=seu_Muscle, slot = 'data')['HCN4',] > 0)
+length(GOI.1)
+
+# SAN3 n=8
+seu_Muscle@meta.data$sub_cluster_SAN <- seu_Muscle@meta.data[,11]
+seu_Muscle@meta.data$sub_cluster_SAN <- as.character(seu_Muscle@meta.data$sub_cluster_SAN)
+seu_Muscle@meta.data[c(names(GOI.1)), 15] <- '8'
+seu_Muscle@meta.data$sub_cluster_SAN <- factor(seu_Muscle@meta.data$sub_cluster_SAN,  levels = c('0','1',  '2','3', '4',  '5','6', '7', '8'))
+
+# create seu metadata file with muscle subclusters
+#names(seu[[]])
+#names(seu_Muscle[[]])
+#seu
+#seu_Muscle
+#table(seu@meta.data[,12])
+#table(seu_Muscle@meta.data[,15])
+seu_Muscle@meta.data$sub_cluster_SAN2 <- seu_Muscle@meta.data[,15]
+seu_Muscle@meta.data[,16] <- as.character(seu_Muscle@meta.data[,16])
+seu_Muscle@meta.data[,16][which(seu_Muscle@meta.data[,16]=='0')] <- 'M0'
+seu_Muscle@meta.data[,16][which(seu_Muscle@meta.data[,16]=='1')] <- 'M1'
+seu_Muscle@meta.data[,16][which(seu_Muscle@meta.data[,16]=='2')] <- 'M2'
+seu_Muscle@meta.data[,16][which(seu_Muscle@meta.data[,16]=='3')] <- 'M3'
+seu_Muscle@meta.data[,16][which(seu_Muscle@meta.data[,16]=='4')] <- 'M4'
+seu_Muscle@meta.data[,16][which(seu_Muscle@meta.data[,16]=='5')] <- 'M5'
+seu_Muscle@meta.data[,16][which(seu_Muscle@meta.data[,16]=='6')] <- 'M6'
+seu_Muscle@meta.data[,16][which(seu_Muscle@meta.data[,16]=='7')] <- 'M7'
+seu_Muscle@meta.data[,16][which(seu_Muscle@meta.data[,16]=='8')] <- 'SAN'
+seu_Muscle@meta.data[,16] <- as.factor(seu_Muscle@meta.data[,16])
+
+seu_merge <- seu@meta.data[,11, drop = FALSE]
+seu_Muscle_merge <- seu_Muscle@meta.data[,16, drop = FALSE]
+names(seu_merge)[1] <- 'sub_cluster_SAN2'
+seu_merge$row <- rownames(seu_merge)
+seu_Muscle_merge$row <- rownames(seu_Muscle_merge)
+
+t <- seu_merge %>%
+  left_join(seu_Muscle_merge, by = "row") %>% 
+  mutate(sub_cluster_SAN2 = coalesce(sub_cluster_SAN2.y, sub_cluster_SAN2.x))
+t <- t[,c(2,4)]
+t[,2] <- factor(t[,2])
+#dim(t)
+seu@meta.data$sub_cluster_SAN2 <- t[,2]
+Idents(seu) <- 'sub_cluster_SAN2'
+#DimPlot(seu, reduction = 'umap', label =T)
+
+saveRDS(seu, file = 'seu_2021_May.R')
+saveRDS(seu_Muscle, file = 'seu_Muscle_2021_May.R')
+
+seu <- readRDS('seu_2021_May.R')
+Idents(seu) <- 'SCT_snn_res.0.38'
+seu_Muscle <- readRDS('seu_Muscle_2021_May.R')
+#names(seu_Muscle[[]])
+#Idents(seu_Muscle) <- "SCT_snn_res.0.7" # original in Seurat
+#Idents(seu_Muscle) <- "sub_cluster_SAN" # with SAN added
+#table(seu_Muscle@meta.data[,15])
+```
+
+### Figure 2A
+
+```{r figs2A, fig.height = 3, fig.width = 8, fig.align = "center" }
+#Atria
+Idents(seu_Muscle) <- 'sub_cluster_SAN'
+Atria <- subset(seu_Muscle, idents = c('3', '5', '8'))
+
+Atria@meta.data$sub_cluster_SAN <- factor(Atria@meta.data$sub_cluster_SAN)
+Atria@meta.data$sub_cluster_SAN2 <- as.character(Atria@meta.data$sub_cluster_SAN)
+Atria@meta.data[,16][which(Atria@meta.data[,16]=='3')] <- 'Trabecular'
+Atria@meta.data[,16][which(Atria@meta.data[,16]=='5')] <- 'Conduit'
+Atria@meta.data[,16][which(Atria@meta.data[,16]=='8')] <- 'SAN'
+saveRDS(Atria, file = 'Atria_July21.R')
+Atria <- readRDS('Atria_July21.R')
+Idents(Atria) <- 'sub_cluster_SAN2'
+p1 <- DimPlot(Atria, cols = c('blue','green', 'red'), pt.size = 2 ) + theme(legend.justification = "top") & NoAxes() 
+
+p2 <- FeaturePlot(Atria,  features = c("TBX18", "SHOX2", "HCN4",  'PPP1R1B', 'ISL1', 'TBX3',  "NPPA", 'NKX2-5', "MYH6",  "GJA5"  ), cols = c("yellow", "red"),  order = TRUE, combine = T) & NoLegend() & NoAxes() 
+
+p21 <- FeaturePlot(Atria,  features = "TBX18", cols = c("yellow", "red")) +  theme_gray() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())  & NoLegend() & NoAxes() 
+p22 <- FeaturePlot(Atria,  features = "SHOX2", cols = c("yellow", "red")) +  theme_gray() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())  & NoLegend() & NoAxes() 
+p23 <- FeaturePlot(Atria,  features = "HCN4", cols = c("yellow", "red"))  +  theme_gray() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())  & NoLegend() & NoAxes() 
+p24 <- FeaturePlot(Atria,  features = "PPP1R1B", cols = c("yellow", "red")) +  theme_gray() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())  & NoLegend() & NoAxes() 
+p25 <- FeaturePlot(Atria,  features = "ISL1", cols = c("yellow", "red")) +  theme_gray() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())  & NoLegend() & NoAxes() 
+p26 <- FeaturePlot(Atria,  features = "TBX3", cols = c("yellow", "red")) +  theme_gray() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())  & NoLegend() & NoAxes() 
+p27 <- FeaturePlot(Atria,  features = "NPPA", cols = c("yellow", "red")) +  theme_gray() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())  & NoLegend() & NoAxes() 
+p28 <- FeaturePlot(Atria,  features = "NKX2-5", cols = c("yellow", "red")) +  theme_gray() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())  & NoLegend() & NoAxes() 
+p29 <- FeaturePlot(Atria,  features = "MYH6", cols = c("yellow", "red")) +  theme_gray() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())  & NoLegend() & NoAxes() 
+p210 <- FeaturePlot(Atria,  features = "GJA5", cols = c("yellow", "red")) +  theme_gray() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())  & NoLegend() & NoAxes() 
+
+p2 <- p21+p22+p23+p24+p25+p26+p27+p28+p29+p210 + plot_layout( ncol = 5)
+
+p1 + p2  + plot_layout(widths = c(1,3))
+```
+
+## DotPlot for ventricular DE genes
+
+### S_Figure 2A
+
+```{r}
+Idents(seu_Muscle) <- 'sub_cluster_SAN'
+seu_Muscle.markers <- FindAllMarkers(seu_Muscle, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+#dim(seu_Muscle.markers)
+#extract markers for dotplot & AUC
+#DotPLot for Ventricles
+markers_Muscle <- extractTopN(seu_Muscle.markers, N = 12) # for Ventricle n = 12, 
+markers_Muscle$cluster <- as.character(markers_Muscle$cluster) 
+
+markers_Muscle <- data.frame(markers_Muscle[,c(6:7, 5, 2)])
+#markers_Muscle
+markers_Muscle.to.plot <- unique(markers_Muscle$gene)
+
+Ventricle <- c(0:2,4,6:7)
+markers_Muscle_Ventricle <- filter(markers_Muscle, cluster %in%  Ventricle) # Atria clusters deleted
+markers_Muscle_Ventricle.to.plot <- unique(markers_Muscle_Ventricle$gene)
+
+seu_Ventricle<- subset(seu_Muscle, idents = c(0:2,4,6:7))
+
+heat_cols <- rev(c("red", 'grey80', 'grey95')) # base: cols = c('blue', 'white') in DotPlot
+
+d <- DotPlot(object = seu_Ventricle,  features = markers_Muscle_Ventricle.to.plot, dot.scale = 4, group.by ='sub_cluster_SAN') + 
+  #scale_colour_gradientn(colors = heat_cols) +
+  scale_y_discrete(name  = "", 
+                   labels = c("Trabecular", "Compact", "Purkinje -related",
+                              "High G2M",
+                              "Exosome-related",
+                              "Outflow tract")) +
+  theme(legend.position= 'top', text = element_text(size = 12),axis.text.x = element_text(size = 8, angle = -90, hjust = 0,vjust = 1), axis.text.y = element_text(size = 10), plot.margin = unit(c(0.5,1,0,0), "cm")) +
+  xlab('  ')
+
+d +
+  annotate ("rect", xmin = 0, xmax = 12.5, ymin = 0, ymax = 6.5, alpha = .1, fill = "blue") +
+  annotate ("rect", xmin = 23.5, xmax = 35.5, ymin = 0, ymax = 6.5, alpha = .1, fill = "blue") +
+  annotate ("rect", xmin = 47.5, xmax = 59.5, ymin = 0, ymax = 6.5, alpha = .1, fill = "blue") 
+
+
+#ggsave("FiguresVentricle_dotplot_0602.pdf", d, height = 15, width = 40,  device = "pdf", units = "cm")
+#dev.off()
+
+```
+
+## Dotplot for atrial DE genes
+
+### S_Figure 3
+
+```{r}
+#DotPlot for Atria
+markers_Muscle <- extractTopN(seu_Muscle.markers, N = 18) # for Atria n = 18
+markers_Muscle$cluster <- as.character(markers_Muscle$cluster) 
+
+markers_Muscle <- data.frame(markers_Muscle[,c(6:7, 5, 2)])
+#markers_Muscle
+markers_Muscle.to.plot <- unique(markers_Muscle$gene)
+
+seu_Atria<- subset(seu_Muscle, idents = c(3,5,8))
+Atria <- c(3,5,8)
+markers_Muscle_Atria <- filter(markers_Muscle, cluster %in%  Atria)
+markers_Muscle_Atria.to.plot <- unique(markers_Muscle_Atria$gene)
+
+markers_Muscle_Atria <- filter(markers_Muscle, cluster %in%  Atria)
+markers_Muscle_Atria.to.plot <- unique(markers_Muscle_Atria$gene)
+
+d <- DotPlot(object = seu_Atria,  features = markers_Muscle_Atria.to.plot, dot.scale = 4, group.by ='sub_cluster_SAN') + 
+  #scale_colour_gradientn(colors = heat_cols) +
+  scale_y_discrete(name  = "", 
+                   labels = c("Trabecular", "Conduit", "SAN")) +
+  theme(legend.position = 'top', text = element_text(size =10), axis.text.x = element_text(size = 10, angle = -45, hjust = 0,vjust = 1), plot.margin = unit(c(0.5,1,0,0), "cm")) +
+  xlab('  ')
+
+d +
+  annotate ("rect", xmin = 18.5, xmax = 33.5, ymin = 0, ymax = 3.5, alpha = .1, fill = "blue")
+```
+
+## Ventricular base, cell cycle phase fractions, mitochondrial and MYH7 and GJA1 variabilities
+
+```{r}
+#Percentage of phase fractions
+Idents(seu_Ventricle) <- 'ClusterNames'
+#Idents(seu_Ventricle) <- 'SCT_snn_res.0.7'
+table(Idents(seu_Ventricle))
+```
+
+### S_Figure 2B
+
+```{r figs2B, fig.height = 8, fig.width = 12, fig.align = "center"}
+seu_Ventricle@meta.data$ClusterNames <- factor(seu_Ventricle@meta.data$ClusterNames, levels = c('Trabecular','Compact',  'Purkinje-related', 'High G2M', 'Exosome-related', 'Outflow tract'))
+
+p10 <- ggplot(seu_Ventricle@meta.data, aes(ClusterNames, fill = base_clusters)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(name="Fractions", limits=c(0, 1.0)) +
+  theme(text = element_text(size=16),  axis.text.y = element_text(size = 12), axis.ticks.x = element_blank(),
+        axis.text.x = element_blank()) +
+  xlab(' ') +
+  labs(fill = "Base")
+
+p20 <- ggplot(seu_Ventricle@meta.data, aes(ClusterNames, fill = Phase)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(name="Fractions", limits=c(0, 1.0)) +
+  theme(text = element_text(size=16), axis.text.x = element_text(size = 12, angle = -45, hjust = 0, vjust = 1), axis.text.y = element_text(size = 12)) +
+  xlab(' ') +
+  labs(fill = "Phase")
+
+p30 <- VlnPlot(seu_Ventricle, features = 'G2M.Score') +
+  theme(text = element_text(size=16),  axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(), axis.text.y = element_text(size = 12),
+        legend.position = "none") +
+  xlab(' ')
+p40 <- VlnPlot(seu_Ventricle, features = 'S.Score') +
+  theme(text = element_text(size=16), axis.text.x = element_text(size = 12, angle = -45, hjust = 0, vjust = 1), axis.text.y = element_text(size = 12), legend.position = "none", plot.margin = unit(c(1, 2, 1, 1), "cm")) +
+  xlab(' ')
+p50 <- p10/p20
+p60 <- p30 / p40
+#p5 | p6
+
+
+# plot only ventricular
+#Idents(seu_Muscle) <- 'SCT_snn_res.0.7'
+#seu_Ventricle <- subset(seu_Muscle, idents = c(0:2,4,6:7))
+#saveRDS(seu_Ventricle, file = 'seu_Ventricle.R')
+#seu_Ventricle <- readRDS('seu_Ventricle.R')
+
+# delete clusters w 0 cells
+#seu_Ventricle@meta.data[,12] <- factor(seu_Ventricle@meta.data[,12])
+#seu_Ventricle@meta.data[,13] <- factor(seu_Ventricle@meta.data[,13])
+#seu_Ventricle@meta.data[,15] <- factor(seu_Ventricle@meta.data[,15])
+
+
+p1 <- ggplot(seu_Ventricle@meta.data, aes(percent.mt, nCount_RNA, colour= base_clusters)) + 
+  geom_point(size = 0.75) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.position = "none") +
+  facet_wrap(~ClusterNames, ncol = 3)
+
+p2 <- ggplot(seu_Ventricle@meta.data, aes(percent.mt, G2M.Score, colour= base_clusters)) + 
+  geom_point(size = 0.75) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.position = "top") +
+  facet_wrap(~ClusterNames, ncol = 3)
+
+p3 <- ggplot(seu_Ventricle@meta.data, aes(percent.mt, S.Score, colour= base_clusters)) + 
+  geom_point(size = 0.75) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.position = "none") +
+  facet_wrap(~ClusterNames, ncol = 3)
+
+ p4 <- FeatureScatter(seu_Ventricle, feature1 = "percent.mt", slot = 'data', feature2 = "MYH7", pt.size = 0.75, cols = c('darkmagenta', 'royalblue1', '#FF7F0E', 'blue', 'green',  'magenta'), plot.cor = F) +  theme_gray() +
+   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+         text = element_text(face = "plain", size = 11),
+         axis.text.x=element_text(angle=0, hjust=1, size=10,face="plain"),
+         axis.title = element_text(size=10,face="plain"),
+         axis.title.y.right = element_text(size = 10,face="plain"),
+         legend.text=element_text(size=10),
+         legend.title=element_text(size=10),
+         legend.position = "none") +
+   facet_wrap(~seu_Ventricle@meta.data$ClusterNames, ncol =3) 
+
+ p5 <- FeatureScatter(seu_Ventricle, feature1 = "percent.mt", slot = 'data', feature2 = "GJA1", pt.size = 0.75, cols = c('darkmagenta', 'royalblue1', '#FF7F0E', 'blue', 'green',  'magenta'), plot.cor = F) + 
+   theme_gray() +
+   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+         text = element_text(face = "plain", size = 11),
+         axis.text.x=element_text(angle=0, hjust=1, size=11,face="plain"),
+         axis.title = element_text(size=11,face="plain"),
+         axis.title.y.right = element_text(size = 11,face="plain"),
+         legend.text=element_text(size=10),
+         legend.title=element_text(size=10),
+         legend.position = "none") +
+ facet_wrap(~seu_Ventricle@meta.data$ClusterNames, ncol =3) 
+   
+
+ layout <- "
+ABC
+DEF
+"
+
+ p1 + p2 + p3 + p4 + p5 + p50 + plot_layout(design = layout)
+# p50
+
+#AUC for projection of ventricular clusters on ST map. Tested for 3, 4, 5, 7 and 12top genes where 7 genes gave best resolution
+ DE_genes_SC_Muscle_top12 <- extractTopN(seu_Muscle.markers, N = 12)
+ 
+ geneSets <- split(DE_genes_SC_Muscle_top12$gene, paste0('',DE_genes_SC_Muscle_top12$cluster))
+ #geneSets
+ geneSets <- geneSets[1:8]
+ genes <- c("TBX18", "SHOX2", "HCN4") # sinus node
+ geneSets <- append(geneSets, list(genes))
+ names(geneSets)[9] <- 'SAN'
+ 
+ # from Asp et al 2019: deposited filtered ST data but not processed
+ ST_filtered <- read.table(file =
+'data2/filtered_matrix.tsv',  sep = '\t', header = TRUE, check.names=FALSE, stringsAsFactors=FALSE)
+ colnames(ST_filtered)[1] <- 'gene_id'
+ #dim(ST_filtered)
+#Load conversion table used for Asp et al 2019 containing ENSEMBL ids and gene symbols (created from annotation GRCh38_v86 gencode file also used for 10X SC data)
+
+ensids <- read.table("data/genes.tsv", header = T, stringsAsFactors = F)
+ rownames(ensids) <- ensids$gene_id
+ 
+ #Check that all ENSEMBL ids are available in the table
+
+#sum(ST_filtered[,1] %in% ensids$gene_id) == nrow(ST_filtered)
+# table(nchar(ensids$gene_id))
+ 
+#merge to get genenames 
+ST_filtered <- merge(ST_filtered, ensids, by.x='gene_id', by.y='gene_id')
+rownames(ST_filtered) <- ST_filtered[,3114] # genenames
+ST_filtered <- ST_filtered[,2:3112]
+
+#Spot names divided into their 3 coordinates
+coords <- setNames(data.frame(apply(do.call(rbind, strsplit(colnames(ST_filtered), split = "x")), 2, as.numeric)), nm = c("well", "x", "y"))
+#dim(coords)
+rownames(coords) <- colnames(ST_filtered) # spot names
+#head(coords)
+
+week6_spots <- which(coords$well %in% 5:13) # well 5:13 is week 6 hearts
+#length(week6_spots)
+ST_6 <- ST_filtered[,week6_spots] #data.frame with week 6 spots
+
+# rownames (genes) used in Asp et al 2019
+
+Article_rownames_ST_6 <- readRDS("data/Article_rownames_ST_6.R")
+#length(Article_rownames_ST_6)
+ST_6 <- ST_6[Article_rownames_ST_6,] # Genes in ST data used in Asp et al 2019
+#dim(ST_6)
+cells_rankings_ST_6 <- AUCell_buildRankings(as.matrix(ST_6), nCores = 9, verbose = FALSE)
+
+# save cells_rankings_ST_6 for use in Stereoscope validation
+saveRDS(cells_rankings_ST_6, file ='cells_rankings_ST_6.R')
+cells_rankings_ST_6.R <- readRDS('cells_rankings_ST_6.R')
+cells_AUC_ST_6 <- AUCell_calcAUC(geneSets, 
+                               cells_rankings_ST_6, 
+                               aucMaxRank = ceiling(0.05 * nrow(cells_rankings_ST_6)), verbose = FALSE)
+# M for muscle subclusters, SC for base clusters
+AUC_ST_m <- setNames(data.frame(t(getAUC(cells_AUC_ST_6))), nm = paste0( 'M', 1:nrow(getAUC(cells_AUC_ST_6))-1))
+
+#on ST tissue 6 weeks
+## 6 weeks # data used in Asp et al 2019
+g.list <- readRDS("data/grobs.list")
+dims_df <- readRDS("data/dims.df")
+qc_alignment <- read.table("data/merged_qc_alignment.txt")
+qc_alignment <- qc_alignment[, c("rep", "x", "y", "new_x", "new_y", "pixel_x", "pixel_y")]
+
+options(repr.plot.width = 13, repr.plot.height = 10) 
+
+g <- 'MYH6'
+MYH6 <- t(ST_6[g,, drop =F])
+
+coords_6 <- coords[rownames(AUC_ST_m),] 
+coords_6 <- cbind(coords_6, AUC_ST_m)
+coords_6 <- cbind(coords_6, MYH6)
+#coords_6b <- coords_6[rownames(AUC_ST_m,)]
+
+# save coords_6 for use in Sterescope validtion
+saveRDS(coords_6, file = 'coords_6.R')
+
+gg_on_tissue <- data.frame(merge( coords_6, qc_alignment, by = "row.names"), row.names = 1)
+#gg_on_tissue <- data.frame(merge(gg_on_tissue, AUC_ST_m, by='row.names'))
+gg_on_tissue$x <- gg_on_tissue$x.y
+gg_on_tissue$y <- gg_on_tissue$y.y
+#names(gg_on_tissue)
+#fill4=c('darkmagenta', 'royalblue1', '#FF7F0E', 'maroon', 'blue',  'green', 'blue','magenta', 'black', 'white')
+colsM <- list()
+colsM[[1]] <- c("lightgrey", "lightgrey",  "lightgrey",  "#b55cb5",  'darkmagenta') #trab M0
+colsM[[2]] <- c("lightgrey", "lightgrey",  "lightgrey",  "#728ff2",  'royalblue1') #comp M1
+colsM[[3]] <- c("lightgrey", "lightgrey",  "lightgrey",  "#ff9a41",  '#FF7F0E') #purkinje M2
+colsM[[4]] <- c("lightgrey", "lightgrey",  "lightgrey",  "#fcacac",  'maroon') #atrial trab M3
+colsM[[5]] <- c("lightgrey", "lightgrey",  "lightgrey",  "#56baf8",  'blue') #High  G2M M4
+colsM[[6]] <- c("lightgrey", "lightgrey",  "lightgrey",  "#ADFF2F",  'green') #atrial cond M5
+colsM[[7]] <- c("lightgrey", "lightgrey",  "lightgrey",  "#f0fabe", "lightgreen") #exosomal M6
+colsM[[8]] <- c("lightgrey", "lightgrey",  "lightgrey",  "#ffccff",  'magenta') #OFT M7
+colsM[[9]] <- c("lightgrey", "lightgrey",  "lightgrey",  "#ff9999",  'red') #SAN M8
+colsM[[10]] <- c("lightgrey", "#56baf8",  "#ffccff",  "#ff9999",  'red') #MYH6
+
+names <- c('Trab', 'Comp', 'Purkinje', 'Atrial_trab', 'HighG2M', 'Atrial_cond', 'Exosome', 'OFT', 'SAN') 
+
+#b55cb5 darkmagenta light trab 0
+#728ff2 royalblue1 light compact1
+#ff9a41 pumpkin #FF7F0E purkinje 2
+#fcacac maroon light atrial trab  3
+#56baf8 light blue    HighG2M 4
+#ADFF2F    green atrial cond 5   
+#f0fabe lightgreen light exosomal 6
+#ff99ff magenta light      OFT 7
+#ff9999 SAN 8
+
+
+for (j in 1:9) { 
+#j=8 # j = 8 is M7 OFT 
+  j2 <- j +3
+
+gg_on_tissue$AUC <- gg_on_tissue[,j2]  # 4 - 12 cl 0 - 8  Atrial trabec (M3:7), Atrial conduit (M5:9), SAN (M8:12)  OFT (M7,11) 
+
+gg_on_tissue$AUC2 <- log(gg_on_tissue$AUC+1)
+max_val <- max(gg_on_tissue$AUC2)
+min_val <- min(gg_on_tissue$AUC2)
+
+#AUC quantitative AUC2 categorical
+gg_on_tissue$AUC3 <- cut(gg_on_tissue$AUC2, breaks = c(0, max_val*0.2, max_val*0.4, max_val*0.6, max_val*0.8,  max_val),  labels = c('0', '1', '2', '3', '4'), right = TRUE)
+gg_on_tissue$AUC3[is.na(gg_on_tissue$AUC3)] <- 0
+#summary(gg_on_tissue$AUC) # linear
+#summary(gg_on_tissue$AUC2) # log
+#print(j)
+#print(summary(gg_on_tissue$AUC3))# categorical based on log
+
+
+#dev.off()
+# projection on slides
+
+cols <- colsM[[j]]
+#cols <- colsM[[(9)]]
+names(cols) <- paste0(0:4)
+#gg_on_tissue$oft <- gg_on_tissue$AUC3
+#names(fill4) <- paste0(0:9)
+p.list <- lapply(min(unique(gg_on_tissue$rep)):max(unique(gg_on_tissue$well)), function(i) {
+  HE_img <- g.list[[i]]
+  d <- suppressWarnings(as.numeric(dims_df[i, ]))
+  
+  g <- rasterGrob(HE_img, width = unit(1, "npc"), height = unit(1, "npc"), interpolate = TRUE)
+  
+  ggplot(subset(gg_on_tissue, rep == i), aes(pixel_x, d[3] - pixel_y, color = AUC3)) + 
+    annotation_custom(g, -Inf, Inf, -Inf, Inf) +
+    geom_point(size = 1.5, alpha = 1.0) + # point size 1.5 for small
+    # 5.0 for individual
+    scale_x_continuous(limits = c(0, d[2]), expand = c(0, 0)) +
+    scale_y_continuous(limits = c(0, d[3]), expand = c(0, 0)) +
+    # categorical values
+    scale_color_manual(values = cols) +
+    # quantitative values
+    #scale_color_gradientn(colours = c("lightgrey", "lightgrey", "lightgrey", "red", "red"), limits = c(min_val, max_val)) +
+    theme_void() +
+    theme(legend.position="none")
+})
+
+#small with 9 sections
+p <- cowplot::plot_grid(plotlist = p.list)
+ggsave(p, filename = paste0("Figures/High_resolution_figures/S_Figure_9/",names[j], "_v2.pdf"), height = 10, width = 11)
+}
+```
+# Validation of scRNA determined cardiomyocyte clusters by projection of ST maps.
+
+Projections on all nine histologic sections saved on file. Individual sections used in figure 3a also saved on file.
+
+### Figure 3A
+
+```{r}
+for (j in 1:9) { 
+#j=8 # j = 8 is M7 OFT 
+  j2 <- j +3
+
+gg_on_tissue$AUC <- gg_on_tissue[,j2]  # 4 - 12 cl 0 - 8  Atrial trabec (M3:7), Atrial conduit (M5:9), SAN (M8:12)  OFT (M7,11) 
+
+gg_on_tissue$AUC2 <- log(gg_on_tissue$AUC+1)
+max_val <- max(gg_on_tissue$AUC2)
+min_val <- min(gg_on_tissue$AUC2)
+
+#AUC quantitative AUC2 categorical
+gg_on_tissue$AUC3 <- cut(gg_on_tissue$AUC2, breaks = c(0, max_val*0.2, max_val*0.4, max_val*0.6, max_val*0.8,  max_val),  labels = c('0', '1', '2', '3', '4'), right = TRUE)
+gg_on_tissue$AUC3[is.na(gg_on_tissue$AUC3)] <- 0
+#summary(gg_on_tissue$AUC) # linear
+#summary(gg_on_tissue$AUC2) # log
+#print(j)
+#print(summary(gg_on_tissue$AUC3))# categorical based on log
+
+#dev.off()
+# projection on slides
+
+cols <- colsM[[j]]
+#cols <- colsM[[(9)]]
+names(cols) <- paste0(0:4)
+#gg_on_tissue$oft <- gg_on_tissue$AUC3
+#names(fill4) <- paste0(0:9)
+p.list <- lapply(min(unique(gg_on_tissue$rep)):max(unique(gg_on_tissue$well)), function(i) {
+  HE_img <- g.list[[i]]
+  d <- suppressWarnings(as.numeric(dims_df[i, ]))
+  
+  g <- rasterGrob(HE_img, width = unit(1, "npc"), height = unit(1, "npc"), interpolate = TRUE)
+  
+  ggplot(subset(gg_on_tissue, rep == i), aes(pixel_x, d[3] - pixel_y, color = AUC3)) + 
+    annotation_custom(g, -Inf, Inf, -Inf, Inf) +
+    geom_point(size = 1.5, alpha = 1.0) + # point size 1.5 for small
+    # 5.0 for individual
+    scale_x_continuous(limits = c(0, d[2]), expand = c(0, 0)) +
+    scale_y_continuous(limits = c(0, d[3]), expand = c(0, 0)) +
+    # categorical values
+    scale_color_manual(values = cols) +
+    # quantitative values
+    #scale_color_gradientn(colours = c("lightgrey", "lightgrey", "lightgrey", "red", "red"), limits = c(min_val, max_val)) +
+    theme_void() +
+    theme(legend.position="none")
+})
+
+# each section saved alone
+#for (i in 1:length(p.list)) {
+i = 6 # used for Figure 1d
+pdf(file = paste0("Figures/High_resolution_figures/S_Figure_9/individual/",names[j], i, "_v2.pdf"), width = 11, height = 10)
+plot(p.list[[i]])
+dev.off()
+
+}
+
+#for (j in 1:9) { 
+j=8 # j = 8 is M7 OFT 
+  j2 <- j +3
+
+gg_on_tissue$AUC <- gg_on_tissue[,j2]  # 4 - 12 cl 0 - 8  Atrial trabec (M3:7), Atrial conduit (M5:9), SAN (M8:12)  OFT (M7,11) 
+
+gg_on_tissue$AUC2 <- log(gg_on_tissue$AUC+1)
+max_val <- max(gg_on_tissue$AUC2)
+min_val <- min(gg_on_tissue$AUC2)
+
+#AUC quantitative AUC2 categorical
+gg_on_tissue$AUC3 <- cut(gg_on_tissue$AUC2, breaks = c(0, max_val*0.2, max_val*0.4, max_val*0.6, max_val*0.8,  max_val),  labels = c('0', '1', '2', '3', '4'), right = TRUE)
+gg_on_tissue$AUC3[is.na(gg_on_tissue$AUC3)] <- 0
+#summary(gg_on_tissue$AUC) # linear
+#summary(gg_on_tissue$AUC2) # log
+#print(j)
+#print(summary(gg_on_tissue$AUC3))# categorical based on log
+
+
+#dev.off()
+# projection on slides
+
+cols <- colsM[[j]]
+#cols <- colsM[[(9)]]
+names(cols) <- paste0(0:4)
+#gg_on_tissue$oft <- gg_on_tissue$AUC3
+#names(fill4) <- paste0(0:9)
+p.list <- lapply(min(unique(gg_on_tissue$rep)):max(unique(gg_on_tissue$well)), function(i) {
+  HE_img <- g.list[[i]]
+  d <- suppressWarnings(as.numeric(dims_df[i, ]))
+  
+  g <- rasterGrob(HE_img, width = unit(1, "npc"), height = unit(1, "npc"), interpolate = TRUE)
+  
+  ggplot(subset(gg_on_tissue, rep == i), aes(pixel_x, d[3] - pixel_y, color = AUC3)) + 
+    annotation_custom(g, -Inf, Inf, -Inf, Inf) +
+    geom_point(size = 3.0, alpha = 1.0) + # point size 1.5 for small
+    # 5.0 for individual
+    scale_x_continuous(limits = c(0, d[2]), expand = c(0, 0)) +
+    scale_y_continuous(limits = c(0, d[3]), expand = c(0, 0)) +
+    # categorical values
+    scale_color_manual(values = cols) +
+    # quantitative values
+    #scale_color_gradientn(colours = c("lightgrey", "lightgrey", "lightgrey", "red", "red"), limits = c(min_val, max_val)) +
+    theme_void() +
+    theme(legend.position="none")
+})
+```
+
+
+```{r fig3A, fig.height = 5, fig.width = 6, fig.align = "center"}
+# each section saved alone
+#for (i in 1:length(p.list)) {
+i = 3
+#pdf(file = paste0("Figures/High_resolution_figures/S_Figure_9/individual/",names[j], i, "_v2.pdf"), width = 11, height = 10)
+plot(p.list[[i]])
+#dev.off()
+
+#}
+```
+### Figure 2C
+
+```{r fig2C, fig.height = 5, fig.width = 6, fig.align = "center"}
+# Atrial composite atrial trabecular, atrial conduit & SAN
+# #plotting atrial spots: trabecular, conduit, both trabecular and conduit, SAN, both conduit & SAN using categorical > 0.6
+# with atrial clusters dicotomized
+# below is for cl3 (mainly trabecular atrium, val 1 (continous), val 4 categorical( labels 0 & 1)). Then redo for cl5 conduit atrium (val 2 (continous), val 5 categorical (labels 0 & 2)). Val 3 SAN (SHOX2+TBX18+HCN4) related val 3 (continous), val 6 categorical (label 0 & 4). Val7 integrates labels 0 + 1 + 4. 3 identifies spots where both labels 1 & 2 are present
+
+gg_on_tissue$trab <- gg_on_tissue[,7]  
+gg_on_tissue$trab <- log(gg_on_tissue$trab+1)
+max_val <- max(gg_on_tissue$trab)
+min_val <- min(gg_on_tissue$trab)
+
+#AUC quantitative AUC2 categorical
+gg_on_tissue$trab <- cut(gg_on_tissue$trab, breaks = c(0, max_val*0.2, max_val*0.4, max_val*0.6, max_val*0.8,  max_val),  labels = c('0', '0', '0', '1', '1'), right = TRUE)
+gg_on_tissue$trab[is.na(gg_on_tissue$trab)] <- 0
+
+gg_on_tissue$cond <- gg_on_tissue[,9]  
+gg_on_tissue$cond <- log(gg_on_tissue$cond+1)
+max_val <- max(gg_on_tissue$cond)
+min_val <- min(gg_on_tissue$cond)
+
+#AUC quantitative AUC2 categorical
+gg_on_tissue$cond <- cut(gg_on_tissue$cond, breaks = c(0, max_val*0.2, max_val*0.4, max_val*0.6, max_val*0.8,  max_val),  labels = c('0', '0', '0', '2', '2'), right = TRUE)
+gg_on_tissue$cond[is.na(gg_on_tissue$cond)] <- 0
+
+gg_on_tissue$SAN <- gg_on_tissue[,12]  
+gg_on_tissue$SAN <- log(gg_on_tissue$SAN+1)
+max_val <- max(gg_on_tissue$SAN)
+min_val <- min(gg_on_tissue$SAN)
+
+#AUC quantitative AUC2 categorical
+gg_on_tissue$SAN <- cut(gg_on_tissue$SAN, breaks = c(0, max_val*0.2, max_val*0.4, max_val*0.6, max_val*0.8,  max_val),  labels = c('0', '0', '0', '3', '3'), right = TRUE)
+gg_on_tissue$SAN[is.na(gg_on_tissue$SAN)] <- 0
+#table(gg_on_tissue$trab)
+#table(gg_on_tissue$cond)
+#table(gg_on_tissue$SAN)
+
+gg_on_tissue$atria <- as.character(gg_on_tissue$trab)
+gg_on_tissue$atria[which(gg_on_tissue$cond =='2')] <- '2'
+gg_on_tissue$atria[which(gg_on_tissue$cond =='2' & gg_on_tissue$trab == '1')] <- '3' 
+gg_on_tissue$atria[which(gg_on_tissue$SAN =='3')] <- '5'
+gg_on_tissue$atria[which(gg_on_tissue$cond =='2' & gg_on_tissue$SAN== '3')] <- '4'
+gg_on_tissue$atria[which(gg_on_tissue$trab =='1' & gg_on_tissue$SAN== '3')] <- '6'
+gg_on_tissue$atria[which(gg_on_tissue$trab =='1' & gg_on_tissue$cond =='2' & gg_on_tissue$SAN== '3')] <- '7'
+#table(gg_on_tissue$atria)
+gg_on_tissue$atria <- as.factor(gg_on_tissue$atria)
+
+
+# list all maps categorical color
+cols <- c("lightgrey", "blue", "green", "orange", 'red', "red", "red", 'red')
+names(cols) <- paste0(0:7)
+
+p.list <- lapply(min(unique(gg_on_tissue$rep)):max(unique(gg_on_tissue$rep)), function(i) {
+  HE_img <- g.list[[i]]
+  d <- suppressWarnings(as.numeric(dims_df[i, ]))
+  
+  g <- rasterGrob(HE_img, width = unit(1, "npc"), height = unit(1, "npc"), interpolate = TRUE)
+  
+  ggplot(subset(gg_on_tissue, rep == i), aes(pixel_x, d[3] - pixel_y, color = atria)) + 
+    annotation_custom(g, -Inf, Inf, -Inf, Inf) +
+    geom_point(size = 3.0, alpha = 1) + #size = 1.5 for small, 3.0 for individual
+    scale_x_continuous(limits = c(0, d[2]), expand = c(0, 0)) +
+    scale_y_continuous(limits = c(0, d[3]), expand = c(0, 0)) +
+    scale_color_manual(values = cols) +
+    theme_void() 
+})
+# all 9 sections use point size = 1.5
+#p <- cowplot::plot_grid(plotlist = p.list)
+#ggsave("/Users/ChristerSylven/Desktop/CMC_ms/Figures/High_resolution_figures/Figure_2/atria_small_v2.pdf", p, height = 18, width = 22,  device = "pdf", dpi = 'retina', units = "cm")
+#dev.off()
+
+#only section 9 where SAN is use point size = 3.0
+plot(p.list[[9]])
+#ggsave("/Users/ChristerSylven/Desktop/CMC_ms/Figures/High_resolution_figures/Figure_2/aFigure2c_v2.pdf", e, width = 22, height = 18,  device = "pdf", dpi = 'retina', units = "cm")
+#dev.off()
+
+
+```
+
+### Manual identification of spots with OFT cardiomyocytes (3 + 4) in section 7.
+
+In order to select spots in outflow tract that contain OFT CMC for analysis of colocalized non CM cells in section 7.
+
+```{r fig4A, fig.height = 5, fig.width = 5, fig.align = "center"}
+# proportions of base non cardiomyocyte clusters located in OFT and atrial  conduit and SAN-enriched spots.
+# First locate manually OFT, atrial conduit and SAN spots in section 7 (OFT) and section 13 (Atrial)
+#table(coords_6$well)
+# 5   6   7   8   9  10  11  12  13 
+#103 104 159 186 214 209 178 182 180 
+#cols for OFT:
+cols <- c("lightgrey", "lightgrey", "lightgrey",   "#ffccff",   "magenta")
+names(cols) <- paste(0:4)
+#cols for Atria:
+cols <- c("lightgrey", "blue", "green", "orange", 'red', "red", "red", 'red')
+names(cols) <- paste0(0:7)
+
+# to identify spots with OFT (section 3, well/rep 7), atrial conduit section 9 (well/rep13)
+# OFT generated as AUC3 in loop
+gg_on_tissue$oft <- gg_on_tissue$AUC3
+#names(gg_on_tissue)
+
+f <- ggplot(
+  subset(gg_on_tissue, rep == 7), aes(x, 36 - y, color = oft)) +
+  geom_point(size = 1.5) +
+  scale_x_continuous(limits = c(1, 33)) +
+  scale_y_continuous(limits = c(1, 35)) + 
+  theme_void() +
+  theme(legend.position="none")+
+  scale_color_manual(values = cols) +
+  theme_void() 
+#f
+ggplotly(f)
+
+#OFT section 7 spots:
+OFT_spots_section3_edited <- c('7x15x20', '7x15x21', '7x16x18','7x16x19', '7x16x20','7x16x21', '7x16x23','7x16x24',  '7x17x19','7x17x20', '7x17x21', '7x17x22', '7x17x23', '7x17x24','7x18x19', '7x18x21','7x18x19','7x18x22','7x18x23', '7x18x24', '7x18x25', '7x19x20', '7x19x22', '7x19x23', '7x19x24', '7x19x25', '7x20x21', '7x20x22', '7x20x23', '7x20x24', '7x20x25','7x21x21', '7x21x23', '7x21x24', '7x22x23', '7x22x24')
+
+length(OFT_spots_section3_edited)
+#Atria only conduit section 13 spots:
+#Conduit_spots_section9_edited <- c('13x23x9','13x22x10',  '13x21x11', '13x21x13', '13x20x16', '13x20x11', '13x19x12', '13x18x13','13x18x17','13x18x18', '13x16x16')
+
+#markers: for base sc clusters
+#seu.markers <- FindAllMarkers(seu, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+#DE_genes_SC_top12 <- extractTopN(seu.markers, N = 12)
+#DE_genes_SC_top12$cluster <- as.character(DE_genes_SC_top12$cluster) 
+#DE_genes_SC_top12 <- data.frame(DE_genes_SC_top12[,c(6:7, 5, 2)])
+```
+
+# Proportions of non CM cell types in OFT CM spots
+
+### Figure 3B
+```{r}
+# #markers: for base sc clusters to use for corrplot
+Idents(seu) <- 'SCT_snn_res.0.38'
+seu.markers <- FindAllMarkers(seu, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+DE_genes_SC_top12 <- extractTopN(seu.markers, N = 12)
+DE_genes_SC_top12$cluster <- as.character(DE_genes_SC_top12$cluster) 
+#DE_genes_SC_top12_all_17_clusters <- DE_genes_SC_top12
+#geneSets_SC_all_17_clusters <- split(DE_genes_SC_top12_all_17_clusters$gene,DE_genes_SC_top12_all_17_clusters$cluster)
+#geneSets_SC_all_17_clusters <- geneSets_SC_all_17_clusters[c(1:2,10:17,3:9)]
+#saveRDS(geneSets_SC_all_17_clusters, file = '/Users/ChristerSylven/Desktop/CMC_ms/GitHub_code/data/geneSets_SC_all_17_clusters.R')
+
+#DE_genes_SC_top12 <- readRDS('/Users/ChristerSylven/Desktop/CMC_ms/GitHub_code/data/geneSets_SC_all_17_clusters.R')
+# find categorical AUC for the 14 non cardiomyocyte scRNA clusters given in markers2
+DE_genes_SC_top12 <- subset(DE_genes_SC_top12, !cluster ==1)
+DE_genes_SC_top12 <- subset(DE_genes_SC_top12, !cluster == 8)
+DE_genes_SC_top12 <- subset(DE_genes_SC_top12, !cluster ==13)
+
+DE_genes_SC_top12[,1] <- factor(DE_genes_SC_top12[,1], levels=unique(DE_genes_SC_top12[,1])) # delete rows w zero cells
+geneSets_SC <- split(DE_genes_SC_top12$gene,DE_genes_SC_top12$cluster)
+
+geneSets_SC <- geneSets_SC[c(1,8:14,2:7)]
+#geneSets_SC
+
+cells_AUC_ST_6_SC <- AUCell_calcAUC(geneSets_SC, 
+                                 cells_rankings_ST_6, 
+                                 aucMaxRank = ceiling(0.05 * nrow(cells_rankings_ST_6)), verbose = FALSE)
+
+AUC_ST_SC <- setNames(data.frame(t(getAUC(cells_AUC_ST_6_SC))), nm = paste0( 1:nrow(getAUC(cells_AUC_ST_6_SC))-1))
+colnames(AUC_ST_SC) <- c('0', '2', '3', '4', '5', '6', '7', '9', '10', '11', '12', '14', '15', '16')
+
+# add column with section identity = rep
+#AUC_ST_cat_a <- cbind(AUC_ST_cat, gg_on_tissue[,17])
+#colnames(AUC_ST_cat_a)[15] <- 'rep'
+# to select only slide 13 where SAN is expressed
+#AUC_ST_cat_b <- subset(AUC_ST_cat_a,rep == '13')
+#AUC_ST_cat <- AUC_ST_cat_b[,1:14]
+
+AUC_ST_SC_cat <- log(AUC_ST_SC+1) # 
+min_val <- apply(AUC_ST_SC_cat, 2, min)
+max_val<- apply(AUC_ST_SC_cat, 2, max)
+
+#for ( i in 1:21) {AUC_ST_cat[,i] = AUC_ST_cat[,i]/(max_val[i]-min_val[i])}
+for ( i in 1:14) {
+  max_val<- max(AUC_ST_SC_cat[,i])
+  AUC_ST_SC_cat[,i]<- cut(AUC_ST_SC_cat[,i], breaks = c(0, max_val*0.2, max_val*0.4, max_val*0.6,   max_val*0.8, max_val), labels = c('0', '1', '2', '3', '4'), right = TRUE)
+}
+AUC_ST_SC_cat[is.na(AUC_ST_SC_cat)] <- 0 
+
+OFT <- as.data.table(AUC_ST_SC_cat[OFT_spots_section3_edited, ])
+#summary(OFT) 
+#nrow(OFT)
+
+test <- as.numeric(as.data.frame(tstrsplit(summary(OFT)[1,], ":", fixed=TRUE))[,2])
+test <- as.data.frame(cbind(c(0,2,3,4,5,6,7,9,10,11,12,14,15,16), test))
+rownames(test) <- test[,1] 
+test$firstq <-nrow(OFT) -test[,2]
+test <- test[,-1]
+#test
+test1_4s <- c((test[1,2]+test[8,2])/2, test[2,2], test[3,2], test[4,2], (test[5,2]+ test[10,2])/2, test[6,2], (test[7,2]+test[9,2])/2 , test[11,2], test[12,2], test[13,2], test[14,2]) 
+OFT1_4_s <- test1_4s 
+
+OFT1_4_s <- OFT1_4_s/nrow(OFT)
+
+labels_s2 = c("Endothel", # E
+              "Epicardium_d",# I
+              "Fb_skeleton",#A
+              "Fb_s_vascular",# G
+              "Erythrocyte",# C
+              "Fb_l_vascular",# B
+              "Fb_smooth_m",# F
+              "Epicardium",# D
+              "Immune",# H
+              "Schwann",# J
+              "Neural crest" # K
+)
+# colors for the merged cell types (rev order for plot
+                           
+fill_ss <- c(
+'green',  # epic
+'#9EDAE5', # Cardiac neural crest
+'#BCBD22', # Immune
+'red',  # erythrc
+'#2CA02C',  # smaller vasc
+'#17BECF', # Schwann
+'#FFBB78', # card skele 
+'#1F77B4', # endoth
+'#F7B6D2', # # Fb_l_vasc
+'#8C564B', # smooth musc 
+'#FF7F0E' # EPDC
+) 
+
+# non-CM in OFT1_4__s spots,
+n_s <- data.frame(labels_s2, OFT1_4_s)
+colnames(n_s) <- c('cluster', 'fraction')
+
+n_s <- n_s[order(-n_s[,2]),]
+n_s[,1] <- as.factor(n_s[,1])
+n_s$cluster= with(n_s, reorder(cluster, fraction))
+ggplot(n_s, aes(x=cluster, y= fraction, fill = cluster)) + 
+  geom_col() +
+  scale_fill_manual(values=fill_ss) +
+  #scale_fill_manual(values=c('black',"#009E73", "#D55E00", "#F0E442", "greenyellow",'red',"orange", "gray50", "#009E73", "#F0E442", "orange")) +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust = 1, size = 16), axis.text.y =   element_text(size   = 16), axis.title=element_text(size=16,face="bold"), legend.position = 'none', legend.title = element_text( size = 16), plot.margin = unit(c(1, 6, 1, 1), "cm")) +
+  ylim(0,1.0) +
+  xlab(NULL)+
+  coord_flip()
+```
+
+#  Proportions of non CM cell types in atrial Conduit CM spots
+
+```{r}
+
+
+Conduit2 <- subset(gg_on_tissue, atria == '2')
+Conduit <- as.data.table(AUC_ST_SC_cat[rownames(Conduit2), ])
+#summary(Conduit) 
+nrow(Conduit) #46
+```
+
+### Figure 4A
+
+```{r}
+
+test <- as.numeric(as.data.frame(tstrsplit(summary(Conduit)[1,], ":", fixed=TRUE))[,2])
+test <- as.data.frame(cbind(c(0,2,3,4,5,6,7,9,10,11,12,14,15,16), test))
+rownames(test) <- test[,1] 
+test$firstq <-nrow(Conduit) -test[,2]
+test <- test[,-1]
+#test 1+8, 5+10 7+9, 
+test1_4s <- c((test[1,2]+test[8,2])/2, test[2,2], test[3,2], test[4,2], (test[5,2]+ test[10,2])/2, test[6,2], (test[7,2]+test[9,2])/2 , test[11,2], test[12,2], test[13,2], test[14,2]) 
+Conduit1_4_s <- test1_4s 
+
+Conduit1_4_s <- Conduit1_4_s/nrow(Conduit)
+
+labels_s2 = c("Endothel", # E
+              "Epicardium_d",# I
+              "Fb_skeleton",#A
+              "Fb_s_vascular",# G
+              "Erythrocyte",# C
+              "Fb_l_vascular",# B
+              "Fb_smooth_m",# F
+              "Epicardium",# D
+              "Immune",# H
+              "Schwann",# J
+              "Neural crest" # K
+)
+# colors for the merged cell types (rev order for plot
+
+fill_s_c <- c(
+  '#BCBD22', # Immune
+  '#9EDAE5', # Cardiac neural crest
+  '#2CA02C',  # smaller vasc
+  '#FFBB78', # card skele 
+  '#17BECF', # Schwann
+  'green',  # epic
+  '#8C564B', # smooth musc 
+  'red',  # erythrc
+  '#F7B6D2',  # larger vasc
+  '#FF7F0E', # EPDC
+  '#1F77B4') # endoth
+
+# non-CM in  Cond_s & SAN_s spots
+n_s <- data.frame(labels_s2, Conduit1_4_s)
+colnames(n_s) <- c('cluster', 'fraction')
+
+
+n_s <- n_s[order(-n_s[,2]),]
+n_s[,1] <- as.factor(n_s[,1])
+n_s$cluster= with(n_s, reorder(cluster, fraction))
+ggplot(n_s, aes(x=cluster, y= fraction, fill = cluster)) + 
+  geom_col() +
+  scale_fill_manual(values=fill_s_c) +
+  #scale_fill_manual(values=c('black',"#009E73", "#D55E00", "#F0E442", "greenyellow",'red',"orange", "gray50", "#009E73", "#F0E442", "orange")) +
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust = 1, size = 16), axis.text.y =   element_text(size   = 16), axis.title=element_text(size=16,face="bold"), legend.position = 'none', legend.title = element_text( size = 16), plot.margin = unit(c(1, 6, 1, 1), "cm")) +
+  ylim(0,1.0) +
+  xlab(NULL)+
+  coord_flip()
+
+#Trabecular2 <- subset(gg_on_tissue, atria == '1')
+
+#Trabecular <- as.data.table(AUC_ST_SC_cat[rownames(Trabecular2), ])
+#summary(Trabecular) 
+#nrow(Trabecular) #46
+
+#test <- as.numeric(as.data.frame(tstrsplit(summary(Trabecular)[1,], ":", fixed=TRUE))[,2])
+#test <- as.data.frame(cbind(c(0,2,3,4,5,6,7,9,10,11,12,14,15,16), test))
+#rownames(test) <- test[,1] 
+#test$firstq <-nrow(Trabecular) -test[,2]
+#test <- test[,-1]
+#test 1+8, 5+10 7+9, 
+#test1_4s <- c((test[1,2]+test[8,2])/2, test[2,2], test[3,2], test[4,2], (test[5,2]+ test[10,2])/2, test[6,2], (test[7,2]+test[9,2])/2 , test[11,2], test[12,2], test[13,2], test[14,2]) 
+#Trabecular1_4_s <- test1_4s 
+
+#Trabecular1_4_s <- Trabecular1_4_s/nrow(Trabecular)
+
+labels_s2 = c("Endothel", # E
+              "Epicardium_d",# I
+              "Fb_skeleton",#A
+              "Fb_s_vascular",# G
+              "Erythrocyte",# C
+              "Fb_l_vascular",# B
+              "Fb_smooth_m",# F
+              "Epicardium",# D
+              "Immune",# H
+              "Schwann",# J
+              "Neural crest" # K
+)
+# colors for the merged cell types (rev order for plot
+
+fill_s_c <- c(
+  '#FFBB78', # card skele
+  '#9EDAE5', # Cardiac neural crest
+  '#17BECF', # Schwann
+  '#BCBD22', # Immune
+  '#2CA02C',  # smaller vasc
+  'green',  # epic
+  '#8C564B', # smooth musc 
+  '#F7B6D2',  # larger vasc
+  '#FF7F0E', # EPDC
+  'red',  # erythrc
+  '#1F77B4') # endoth
+# colors for the merged cell types
+
+# non-CM in OFT1_4__s spots, Cond_s & SAN_s
+#n_s <- data.frame(labels_s2, Trabecular1_4_s)
+#colnames(n_s) <- c('cluster', 'fraction')
+
+#n_s <- n_s[order(-n_s[,2]),]
+#n_s[,1] <- as.factor(n_s[,1])
+#n_s$cluster= with(n_s, reorder(cluster, fraction))
+#ggplot(n_s, aes(x=cluster, y= fraction, fill = cluster)) + 
+#  geom_col() +
+#  scale_fill_manual(values=fill_s_c) +
+  #scale_fill_manual(values=c('black',"#009E73", "#D55E00", "#F0E442", "greenyellow",'red',"orange", "gray50", "#009E73", "#F0E442", "orange")) +
+#  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust = 1, size = 16), axis.text.y =   element_text(size   = 16), axis.title=element_text(size=16,face="bold"), legend.position = 'none', legend.title = element_text( size = 16), plot.margin = unit(c(1, 6, 1, 1), "cm")) +
+#  ylim(0,1.0) +
+#  xlab(NULL)+
+#  coord_flip()
+
+#statistics
+f <- GetAssayData(object = seu_Ventricle, slot = 'counts')
+f2 <- NormalizeData(f)
+test = 'GJA1'
+
+seu_Ventricle$test  <- f2[test,]
+#class(seu_Ventricle$test)
+#head(seu_Ventricle$test)
+#summary(seu_Ventricle$test)
+#seu_Ventricle$test
+
+
+# extract markers for xls file & GO
+Idents(seu_Muscle) <- 'sub_cluster_SAN'
+p.val = p.val.threshold = 0.01
+
+seu_Muscle.markers <- seu_Muscle.markers %>% 
+  group_by(cluster) %>%
+  arrange(-avg_log2FC) %>%
+  mutate(or = 1:n()) %>%
+  mutate(sign = ifelse(or %in% 1:10, gene, ""), DE = ifelse(p_val_adj < p.val.threshold, paste0("adj. P-val < ", p.val.threshold), paste0("adj. P-val >= ", p.val.threshold)),
+         sign.flat = ifelse(or %in% (n() - 10):n() | or %in% 1:10, gene, "")) %>%
+  arrange(cluster)
+#head(seu_Muscle.markers)
+
+wb <- createWorkbook()
+ 
+seu_Muscle <- readRDS('seu_Muscle_2021_May.R')
+Idents(seu_Muscle) <- 'sub_cluster_SAN'
+
+n <- nlevels(Idents(seu_Muscle))-1
+
+#n 
+
+for(i in 0:n){
+name <- paste0('l',i)
+
+#print(paste0('Cluster ', i))
+
+t <- FindMarkers(object = seu_Muscle, ident.1 = i, min.pct = 0.1)
+t <- t %>% filter(p_val_adj <0.01)
+t$gene <- rownames(t)
+t <- bitr(t$gene, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = "org.Hs.eg.db")
+t <- list(t[,2])
+assign(name, t, envir = globalenv())
+}
+
+# definition of SAN according to literature. Conservative, but may be used as there are too few SAN cells. References in article 
+eg9 = bitr( c('TBX18', 'SHOX2', 'HCN4'), fromType = "SYMBOL", toType = "ENTREZID", OrgDb = "org.Hs.eg.db")
+l9 = list(eg9[,2])
+
+list_SC_Ventricle <- c(l0, l1, l2, l4, l6, l7)
+names(list_SC_Ventricle) <- c("Trabecular", "Compact",  "Purkinje-related",   "High G2M", "Exosome-related",  "Outflow tract")
+# to keep input order in output
+names(list_SC_Ventricle) <- factor(c("Trabecular", "Compact",  "Purkinje-related",   "High G2M", "Exosome-related",  "Outflow tract"), levels = c("Trabecular", "Compact",  "Purkinje-related",   "High G2M", "Exosome-related",  "Outflow tract")) 
+
+```
+# GO terms
+
+Choose which ontology
+BP = biological processes, MF = molecular function, CC = cellular component
+
+## Edited GO BP terms for ventricular clusters
+
+```{r}
+ck <- compareCluster(geneCluster = list_SC_Ventricle, fun = "enrichGO", OrgDb = org.Hs.eg.db, ont = "BP", pvalueCutoff = 0.05)
+#ck <- compareCluster(geneCluster = list_SC_Muscle, fun = "enrichGO", OrgDb = org.Hs.eg.db, ont = "MF", pvalueCutoff = 0.05)
+#ck <- compareCluster(geneCluster = list_SC_Muscle, fun = "enrichGO", OrgDb = org.Hs.eg.db, ont = "CC", pvalueCutoff = 0.05)
+
+#head(as.data.frame(ck))
+
+#fig.width=6, fig.height=6, fig.retina=2}
+#knitr::opts_chunk$get('fig.retina')
+# plot
+
+#dotplot(ck, font.size = 12) 
+#+
+ # theme(axis.text.x = element_text(size = 11, angle = 90, vjust = 1, hjust = 1), axis.text.y = element_text(size = 13, angle = 0, hjust = 1,  colour = 'black')) +
+#  ggtitle("")
+
+```
+For editing. Print descriptions for respective cluster and  select relevant descriptions and their order in dotplot.
+
+### Figure 1C
+
+```{r fig1C, fig.height = 8.5, fig.width = 12, fig.align = "center"}
+#head(as.data.frame(ck))
+ck2 <- as.data.frame(ck)
+
+#print Descriptions for cluster in order to select relevant GO terms
+ck3 <- filter(ck2, Cluster == 'Outflow tract')
+ck4 <- ck3[ c('Description','p.adjust')]
+#ck4[1:100,]
+
+ventricle <- c("cardiac muscle tissue development", 
+               "muscle organ development",
+           "heart contraction",
+           "cardiac muscle tissue morphogenesis", 
+           "regulation of muscle contraction", 
+           "regulation of cardiac conduction",
+           "second-messenger-mediated signaling",
+           "parasympathetic nervous system development",
+           "regulation of calcium-mediated signaling",
+           "cell communication involved in cardiac conduction",
+           "regulation of membrane potential",
+           "regulation of transmembrane transporter activity",
+           "regulation of heart rate",
+           "glycolytic process", 
+           "glucose catabolic process to pyruvate",
+           "NADH regeneration",
+           "response to hypoxia",
+           "cotranslational protein targeting to membrane", 
+           "protein targeting to ER",
+           "extracellular structure organization",
+           "regulation of actin cytoskeleton organization", 
+           'mesenchyme development',
+           'aminoglycan catabolic process',
+           "regulation of mitochondrion organization",  
+          "nuclear division",
+          "organelle fission",
+          "chromosome segregation",
+          "mitotic spindle organization",                                     
+          "cell cycle G2/M phase transition",
+          "regulation of mitotic cell cycle phase transition",
+          "G2/M transition of mitotic cell cycle")
+# plot ventricular clusters
+ck2 <- as.data.frame(ck)
+# transform GeneRatio (character, i.e. 6/98) to numeric
+z <- apply(do.call(rbind, strsplit(ck2$GeneRatio, split = "/")), 2, as.numeric)
+colnames(z) <- c( "x", "y")
+z <- as.data.frame(z)
+#dim(z)
+#head(z)
+ck2$GeneRatio <- z$x/z$y
+
+ck3 <- filter(ck2, Description %in% ventricle)
+
+#ck3 <- ck2[ck2$Description %in% devA,]
+#dim(ck3)
+
+ck3$Description <- factor(ck3$Description, levels = ventricle)
+
+labels_ventricular <- c(
+  c("Cardiac muscle tissue development",
+    "Muscle organ development",
+    "Heart contraction",
+    "Cardiac muscle tissue morphogenesis", 
+    "Regulation of muscle contraction", 
+    "Regulation of cardiac conduction",
+    "Second-messenger-mediated signaling",
+    "Parasympathetic nervous system development",
+    "Cell communication involved in cardiac conduction",
+    "Regulation of membrane potential",
+    "Regulation of transmembrane transporter activity",
+    "Regulation of heart rate",
+    "Glycolytic process", 
+    "Glucose catabolic process to pyruvate",
+    "NADH regeneration",
+    "Response to hypoxia",
+    "Cotranslational protein targeting to membrane", 
+    "Protein targeting to ER",
+    "Extracellular structure organization",
+    "Regulation of actin cytoskeleton organization",
+    'Mesenchyme develoment',
+    'Aminoglycan catabolic process',
+    "Nuclear division",
+    "Organelle fission",
+    "Chromosome segregation",
+    "Mitotic spindle organization",                                           
+    "Cell cycle G2/M phase transition",
+    "Regulation of mitotic cell cycle phase transition",
+    "G2/M transition of mitotic cell cycle")
+)
+
+ggplot(ck3, aes(x = Cluster, y = Description)) + 
+  #p <- ggplot(ck3, aes(x = Cluster, y = reorder(Description, desc(Description)))) + 
+  geom_point(aes(size = GeneRatio, color = p.adjust)) +
+  theme_bw(base_size = 16) +
+  scale_colour_gradient(limits = c(0, 0.05), low = "red") +
+  guides(
+    #reverse color order (higher value on top)
+    color = guide_colorbar(reverse = TRUE),
+    #reverse size order (higher diameter on top) 
+    size = guide_legend(reverse = TRUE))+
+  ylab(NULL) +
+  xlab(NULL) +
+  scale_y_discrete(labels = labels_ventricular) +
+  theme_gray() +
+  theme(axis.text.x = element_text(size = 13, angle = 90, vjust = 1, hjust = 1), axis.text.y = element_text(size = 13, angle = 0, hjust = 1, vjust = 1, colour = 'black'), legend.position = "top") +
+  ggtitle("")+
+  theme(plot.margin = unit(c(2,0.5,0.5,0.5), "cm")) +
+  theme(
+    legend.title = element_text(size=12, vjust = -25, hjust = -0.1)) +
+  theme(plot.margin=unit(c(5,5,1,1),"cm"))
+  coord_flip()
+
+```
+
+## Edited GO BP terms for atrial clusters
+
+### Figure 2B
+
+```{r fig2B, fig.height = 12, fig.width = 8, fig.align = "center"}
+
+
+list_SC_Atria <- c(l3, l5, l9)
+names(list_SC_Atria) <- c("Atrial trabecular",  "Atrial conduit", "SAN")
+
+ck <- compareCluster(geneCluster = list_SC_Atria, fun = "enrichGO", OrgDb = org.Hs.eg.db, ont = "BP", pvalueCutoff = 0.05)
+#ck <- compareCluster(geneCluster = list_SC_Muscle, fun = "enrichGO", OrgDb = org.Hs.eg.db, ont = "MF", pvalueCutoff = 0.05)
+#ck <- compareCluster(geneCluster = list_SC_Muscle, fun = "enrichGO", OrgDb = org.Hs.eg.db, ont = "CC", pvalueCutoff = 0.05)
+
+#head(as.data.frame(ck))
+
+# plot
+
+#dotplot(ck, font.size = 12) 
+#+
+#  theme(axis.text.x = element_text(size = 11, angle = 90, vjust = 1, hjust = 1), axis.text.y = element_text(size = 13, angle = 0, hjust = 1,  colour = 'black')) +
+#  ggtitle("")
+
+#print Descriptions for cluster in order to select relevant GO terms
+#head(as.data.frame(ck))
+ck2 <- as.data.frame(ck)
+
+#print Descriptions for cluster in order to select relevant GO termsck3 <- filter(ck2, Cluster == 'Outflow tract')
+ck4 <- ck3[ c('Description','p.adjust')]
+#ck4[1:100,]
+ck3 <- filter(ck2, Cluster == 'Atrial conduit')
+ck4 <- ck3[ c('Description','p.adjust')]
+#ck4[1:100,]
+
+atria <- c(
+  'SA node cell to atrial cardiac muscle cell communication',
+  'cardiac conduction system development',
+  'regulation of action potential',
+  'regulation of heart rate',
+  'cell-cell signaling involved in cardiac conduction',
+  'cell communication by electrical coupling',
+  'muscle contraction',
+  'muscle system process',
+  'cardiac septum morphogenesis',
+  'tissue migration',
+  'epithelial cell migration',
+  'positive regulation of epithelial to mesenchymal transition',
+  'mesenchymal cell development',
+  'endothelial cell proliferation', 
+  'connective tissue development',
+  'BMP signaling pathway',
+  'response to transforming growth factor beta',
+  'regulation of canonical Wnt signaling pathway')
+
+ck2 <- as.data.frame(ck)
+# transform GeneRatio (character, i.e. 6/98) to numeric
+z <- apply(do.call(rbind, strsplit(ck2$GeneRatio, split = "/")), 2, as.numeric)
+colnames(z) <- c( "x", "y")
+z <- as.data.frame(z)
+
+ck2$GeneRatio <- z$x/z$y
+
+ck3 <- filter(ck2, Description %in% atria)
+
+ck3$Description <- factor(ck3$Description, levels = atria)
+
+# plot atrial clusters
+labels_atrial <-
+  c(
+    'SA node cell to atrial cardiac muscle cell communication',
+    'Cardiac conduction system development',
+    'Regulation of action potential',
+    'Regulation of heart rate',
+    'Cell-cell signaling involved in cardiac conduction',
+    'Cell communication by electrical coupling',
+    'Muscle contraction',
+    'Muscle system process',
+    'Cardiac septum morphogenesis',
+    'Tissue migration',
+    'Epithelial cell migration',
+    'Positive regulation of epithelial to mesenchymal transition',
+    'Mesenchymal cell development',
+    'Endothelial cell migration',
+    'Connective tissue development',
+    'BMP signaling pathway',
+    'Response to transforming growth factor beta',
+    'Regulation of canonical Wnt signaling pathway')
+
+ggplot(ck3, aes(x = Cluster, y = Description)) + 
+  #p <- ggplot(ck3, aes(x = Cluster, y = reorder(Description, desc(Description)))) + 
+  geom_point(aes(size = GeneRatio, color = p.adjust)) +
+  theme_bw(base_size = 16) +
+  scale_colour_gradient(limits = c(0, 0.05), low = "red") +
+  guides(
+    #reverse color order (higher value on top)
+    color = guide_colorbar(reverse = TRUE),
+    #reverse size order (higher diameter on top) 
+    size = guide_legend(reverse = TRUE))+
+  ylab(NULL) +
+  xlab(NULL) +
+  scale_y_discrete(labels = labels_atrial, position = "right") +
+  theme_gray() +
+  theme(axis.text.x = element_text(size = 11, angle = 90, vjust = 1, hjust = 1), axis.text.y = element_text(size = 11, angle = 0, hjust = 1,  colour = 'black')) +
+ #scale_y_discrete(position = "right") +
+  ggtitle("")+
+  theme(legend.justification = c(1, 1), 
+      legend.position = c(0, 0),
+       legend.box = 'horizontal'
+      )
+  
+#   theme(legend=element_text(size=15,  vjust=-25, hjust = 1.1), legend.box = 'horizontal') +
+#  theme(plot.margin = unit(c(5,1,1,1), "cm"))
+ 
+  
+  
+```
+
+# Validation of AUC with Stereoscope
+
+### Figure S 5 
+ 
+```{r figS5, fig.height = 8, fig.width = 8, fig.align = "center"}
+# Collect tsv files with cell type proportions
+tsv.files <- list.files(path = '/Users/ChristerSylven/Desktop/CMC_ms/GitHub_code/fh_Christer/', pattern = ".tsv", recursive = TRUE, full.names = TRUE)
+
+# with rownames (spot names as in original ST map)#find subset stereoscope section spots  w unique correspondence to article ST spots spots stereoscope 1-8. 1 = ST 13
+# 1 -> 13
+# 2 -> 8
+# 3 -> 11
+# 4 -> 7
+# 5 -> 12
+# 6 -> 9
+# 7 -> 6 
+# 8 -> 10
+
+scMat_5 <- do.call(rbind, lapply(seq_along(tsv.files), function(i) {
+  # read one matrix at the time
+  df <- read.table(file = tsv.files[i])
+  if(i ==1) {
+    j = '13'
+  } 
+  if (i == 2) {
+    j = 8
+ }
+  if (i == 3) {
+    j = 11
+  }
+   if (i == 4) {
+     j = 7
+ }
+   if (i == 5) {
+     j = 12
+ }
+   if (i == 6) {
+     j = 9
+ }
+   if (i == 7) {
+     j = 6
+  }
+   if (i == 8) {
+     j = 10
+ }
+  # add a sample number to the rownames
+ rownames(df) <- paste(j, gsub(pattern = "X", replacement = "", x = rownames(df)), sep = "x")
+  return(df)
+}))
+# order of clusters as in SC DimPlot
+scMat_5 <- scMat_5[,c(2,15,9, 6, 11, 14, 8, 1, 10, 5, 4, 7, 13, 12, 3 )]
+
+#dim(scMat_5) #1375 15
+
+#coords_scMat_5 <- setNames(data.frame(apply(do.call(rbind, strsplit(rownames(scMat_5), split = "x")), 2, as.numeric)), nm = c("rep", "x", "y"))
+#rownames(coords_scMat_5) <- rownames(scMat_5)
+ 
+coords_6 <- readRDS('/Users/ChristerSylven/Desktop/CMC_ms/GitHub_code/coords_6.R')
+#dim(coords_6) #1515
+
+scMat_5 <- subset(scMat_5, rownames(scMat_5) %in% rownames(coords_6))
+#dim(scMat_5) #1357
+
+# use same 15 scRNA clusters as used in steroscope to generate AUC profiles
+
+# old Seurat analysis, 14 SC clusters
+#seu2 <- readRDS('/Users/ChristerSylven/Desktop/aLudvig_jan11/SC_data_processing_and_analysis/results/matrices/Seurat_SC_doublet_filtered')
+#seu2 <- UpdateSeuratObject(seu2)
+#seu2
+#names(seu2)
+#Idents(seu2) <- 'res.0.7'
+#DimPlot(seu2, reduction = 'tsne', label = TRUE)
+#names(seu2[[]])
+#table(seu2@meta.data[,8])
+
+
+#DE genes 15 clusters for old Seurat
+#DE_genes_SC_old <- data.frame() # Create empty data.frame
+#for (i in 1:15) { # Iterate through the numbers of clusters
+  # 10 clusters 
+#  excel_sheet <- read.xlsx("/Users/ChristerSylven/Desktop/aLudvig_jan11/SC_data_processing_and_analysis/results/matrices/marker_genes_from_Seurat_2.xlsx", sheet = i) # Read sheet i
+#  DE_genes_SC_old <- rbind(DE_genes_SC_old, excel_sheet) # Bind the new data.frame called excel_sheet to the data.frame called DE_genes_SC
+#}
+#dim(DE_genes_SC_old)
+#names(DE_genes_SC_old)
+#extractTopN_old <- function(DE_genes, N = 5) { # use avg_log2FC for new & avg_logFC for old Seurat
+#  subset(DE_genes, avg_logFC > 0) %>% # Subset the data.frame to include only positive avg_logFC values
+#    arrange(-avg_logFC) %>% # Arrange the data.frame by decreasing avg_logFC ("-" = decreasing)
+#    group_by(cluster) %>% # Group the data.frame by cluster (this will produce a "grouped" data.frame, i.e. a subset for each cluster)
+#    top_n(N, avg_logFC) %>% # Extract top N rows for each cluster based on avg_logFC
+#    arrange(cluster) 
+#}
+
+extractTopN <- function(DE_genes, N = 5) { # use avg_log2FC for new & avg_logFC for old Seurat
+  subset(DE_genes, avg_log2FC > 0) %>% # Subset the data.frame to include only positive avg_logFC values
+    arrange(-avg_log2FC) %>% # Arrange the data.frame by decreasing avg_logFC ("-" = decreasing)
+    group_by(cluster) %>% # Group the data.frame by cluster (this will produce a "grouped" data.frame, i.e. a subset for each cluster)
+    top_n(N, avg_log2FC) %>% # Extract top N rows for each cluster based on avg_logFC
+    arrange(cluster) 
+}
+#Old seu set
+#Apply extractTopN() function
+#DE_genes_SC_old_top12 <- extractTopN_old(DE_genes_SC_old, N = 12) #change avg_log2FC to old  avg_logFC in extractTopN
+#geneSets_SC_old <- split(DE_genes_SC_old_top12$gene, paste0('',DE_genes_SC_old_top12$cluster))
+#geneSets_SC_old
+
+#geneSets_SC_old <- geneSets_SC_old[c(1:2,8:15,3:7)]
+#geneSets_SC_old
+
+#saveRDS(geneSets_SC_old, file = 'data/Article_SC_old_top12_15clusters.R')
+geneSets_SC_old_article <- readRDS('/Users/ChristerSylven/Desktop/CMC_ms/GitHub_code/data/Article_SC_old_top12_15clusters.R')
+# new Seurat analysis, seu_2021_May 17 clusters SCT_snn_res.0.38 or 22 clusters incl muscle subclusters sub_cluster_SAN2
+#seu <- readRDS('/Users/ChristerSylven/seu_2021_May.R')
+#names(seu[[]])
+
+
+#Idents(seu) <- "SCT_snn_res.0.38"
+#DE_genes_SC_new  <- FindAllMarkers(seu, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+#dim(DE_genes_SC_new)
+
+#new seu set & Muscle subset
+#DE_genes_SC_new_top12 <- extractTopN(DE_genes_SC_new, N = 12) #change avg_log2FC to old  avg_logFC in extractTopN
+#geneSets_SC_new <- split(DE_genes_SC_new_top12$gene, paste0('',DE_genes_SC_new_top12$cluster))
+#geneSets_SC_new
+
+# new large subset to get increasing order of clusters
+#geneSets_SC_new <- geneSets_SC_new[c(1:2,10:17,3:9)]
+geneSets_SC_new <- readRDS('/Users/ChristerSylven/Desktop/CMC_ms/GitHub_code/data/geneSets_SC_all_17_clusters.R')
+
+
+seu_Muscle <- readRDS('/Users/ChristerSylven/Desktop/CMC_ms/GitHub_code/seu_Muscle_2021_May.R')
+#names(seu_Muscle[[]])
+Idents(seu_Muscle) <- "sub_cluster_SAN2"
+DE_genes_SC_Muscle  <- FindAllMarkers(seu_Muscle, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+DE_genes_SC_Muscle_top12 <- extractTopN(DE_genes_SC_Muscle, N = 12) #change avg_log2FC to old  avg_logFC in extractTopN
+geneSets_SC_Muscle<- split(DE_genes_SC_Muscle_top12$gene, paste0('',DE_genes_SC_Muscle_top12$cluster))
+#geneSets_SC_Muscle
+
+geneSets_SC_Muscle <- geneSets_SC_Muscle[1:8]
+genes <- c("TBX18", "SHOX2", "HCN4") # sinus node
+geneSets_SC_Muscle <- append(geneSets_SC_Muscle, list(genes))
+names(geneSets_SC_Muscle)[9] <- 'SAN'
+#geneSets_SC_Muscle
+
+
+# cell rankings for whole ST_6 set
+cells_rankings_ST_6 <- readRDS('/Users/ChristerSylven/Desktop/CMC_ms/GitHub_code/cells_rankings_ST_6.R')
+#cell rankings for spots present in both ST_6 and scMat_5 (Stereoscope)
+cells_rankings_ST_6_subset <- cells_rankings_ST_6[,rownames(scMat_5)]
+#dim(cells_rankings_ST_6_subset)
+
+# AUC for old SC, 15 clusters, identical to Stereoscope
+cells_AUC_SC_old_onST_article <- AUCell_calcAUC(geneSets_SC_old_article, cells_rankings_ST_6_subset, aucMaxRank = ceiling(0.05 * nrow(cells_rankings_ST_6_subset)), verbose = FALSE)
+
+AUC_SC_old_onST_article <- setNames(data.frame(t(getAUC(cells_AUC_SC_old_onST_article))), nm = paste0('A', 1:nrow(getAUC(cells_AUC_SC_old_onST_article))-1))
+#dim(AUC_SC_old_onST_article)
+
+# AUC for new SC, 17 clusters
+cells_AUC_SC_new_onST <- AUCell_calcAUC(geneSets_SC_new, cells_rankings_ST_6_subset, aucMaxRank = ceiling(0.05 * nrow(cells_rankings_ST_6_subset)), verbose = FALSE)
+
+AUC_SC_new_onST <- setNames(data.frame(t(getAUC(cells_AUC_SC_new_onST))), nm = paste0('A', 1:nrow(getAUC(cells_AUC_SC_new_onST))-1))
+#dim(AUC_SC_new_onST)
+
+#
+# AUC for new SC Muscle, 9 clusters
+cells_AUC_SC_Muscle_onST <- AUCell_calcAUC(geneSets_SC_Muscle, cells_rankings_ST_6_subset, aucMaxRank = ceiling(0.05 * nrow(cells_rankings_ST_6_subset)), verbose = FALSE)
+
+AUC_SC_Muscle_onST <- setNames(data.frame(t(getAUC(cells_AUC_SC_Muscle_onST))), nm = paste0('A', 1:nrow(getAUC(cells_AUC_SC_Muscle_onST))-1))
+#dim(AUC_SC_Muscle_onST)
+
+
+#Correlation
+#corMat <- cor(AUC_ST_subset)
+
+#corMat <- cor(scMat2)
+#corMat <- cor(scMat)
+
+#pheatmap::pheatmap(corMat, color = colorRampPalette(RColorBrewer::brewer.pal(n = 11, name = "RdBu") %>% rev())(51), breaks = seq(-1, 1, length.out = 51))
+
+# Stereoscope vs SC old
+sc <- t(AUC_SC_old_onST_article)
+AUC <- t(scMat_5)
+cormat1= matrix(0, nrow=nrow(sc), ncol=nrow(AUC))
+for(i in 1:nrow(sc))
+  {
+    for(j in 1:nrow(AUC))
+      {
+           # cormat[i,j] = cor(unlist(sc[i,-1]), unlist(AUC[j,-1]))
+      cormat1[i,j] = cor(sc[i,], AUC[j,])
+        }
+}
+colnames(cormat1) = paste0("A", 1:ncol(cormat1)-1)
+rownames(cormat1) = paste0("S", 1:nrow(cormat1)-1)
+
+# Stereoscope vs Stereoscope
+sc <- t(scMat_5)
+AUC <- t(scMat_5)
+cormat2= matrix(0, nrow=nrow(sc), ncol=nrow(AUC))
+for(i in 1:nrow(sc))
+{
+  for(j in 1:nrow(AUC))
+  {
+    # cormat[i,j] = cor(unlist(sc[i,-1]), unlist(AUC[j,-1]))
+    cormat2[i,j] = cor(sc[i,], AUC[j,])
+  }
+}
+colnames(cormat2) = paste0("S", 1:ncol(cormat2)-1)
+rownames(cormat2) = paste0("S", 1:nrow(cormat2)-1)
+#c2 <- corrplot(cormat2, cl.pos='n') 
+
+#AUC_SC_old_onST_article vs AUC_SC_old_onST_article
+sc <- t(AUC_SC_old_onST_article)
+AUC <- t(AUC_SC_old_onST_article)
+cormat3= matrix(0, nrow=nrow(sc), ncol=nrow(AUC))
+for(i in 1:nrow(sc))
+{
+  for(j in 1:nrow(AUC))
+  {
+    # cormat[i,j] = cor(unlist(sc[i,-1]), unlist(AUC[j,-1]))
+    cormat3[i,j] = cor(sc[i,], AUC[j,])
+  }
+}
+colnames(cormat3) <- colnames(AUC_SC_old_onST_article)
+rownames(cormat3) <- colnames(AUC_SC_old_onST_article)
+
+#AUC_SC_new_onST vs AUC_SC_new_onST
+sc <- t(AUC_SC_new_onST)
+AUC <- t(AUC_SC_new_onST)
+cormat4= matrix(0, nrow=nrow(sc), ncol=nrow(AUC))
+for(i in 1:nrow(sc))
+{
+  for(j in 1:nrow(AUC))
+  {
+    # cormat[i,j] = cor(unlist(sc[i,-1]), unlist(AUC[j,-1]))
+    cormat4[i,j] = cor(sc[i,], AUC[j,])
+  }
+}
+colnames(cormat4) <- colnames(AUC_SC_new_onST)
+rownames(cormat4) <- colnames(AUC_SC_new_onST)
+
+#AUC_SC_Muscle_onST_article vs AUC_SC_oMuscle_onST_article
+sc <- t(AUC_SC_Muscle_onST)
+AUC <- t(AUC_SC_Muscle_onST)
+cormat5= matrix(0, nrow=nrow(sc), ncol=nrow(AUC))
+for(i in 1:nrow(sc))
+{
+  for(j in 1:nrow(AUC))
+  {
+    # cormat[i,j] = cor(unlist(sc[i,-1]), unlist(AUC[j,-1]))
+    cormat5[i,j] = cor(sc[i,], AUC[j,])
+  }
+}
+
+colnames(AUC_SC_Muscle_onST) <- c('Trabecular', 'Compact', 'Purkinje-related',' Atrial trabecular', 'HighG2M','Atrial conduit', 'Exosome-related', 'OFT', 'SAN')
+
+colnames(cormat5) <- colnames(AUC_SC_Muscle_onST)
+rownames(cormat5) <-   c('','','','','','','','','')
+
+
+nf <- layout(matrix(c(1,2,3,4,5,6), 2, 3, byrow = TRUE), widths = c(0.75, 0.75, 1), respect = TRUE)
+#layout.show(nf)
+
+#par(mfcol=c(2,3))
+
+corrplot(cormat1, cl.pos='n')
+corrplot(cormat2, cl.pos='n')
+
+corrplot(cormat5, cl.pos='n', tl.cex = 1, tl.srt =90) 
+res1 <- cor.mtest(cormat5, conf.level = .99)
+## specialized the insignificant value according to the significant level
+corrplot(cormat5,  cl.pos='n', add = TRUE, p.mat = res1$p, sig.level = .01,  type = 'lower', tl.pos = "n")
+corrplot(cormat3, cl.pos='n')
+corrplot(cormat4, cl.pos='n')
+
+```
+
+##  Session info
+
+```{r}
+sessionInfo()
+```

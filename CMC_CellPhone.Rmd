@@ -1,0 +1,858 @@
+---
+title: "CMC Cellphone analysis"
+author: "Christer Sylvén"
+date: '20220129'
+output: 
+  html_document:
+    self_contained: true
+    highlight: tango
+    df_print: paged
+    code_folding: hide
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: false
+      smooth_scroll: true  
+---
+
+```{r setup, include=FALSE}
+## setting working directory
+knitr::opts_knit$set(root.dir = "/Users/ChristerSylven")
+knitr::opts_knit$set(progress=TRUE,verbose=TRUE)
+knitr::opts_chunk$set(message=FALSE, warning=FALSE, #result='hold',fig.width=unit(18,"cm"), fig.height =unit(11,"cm"))
+result='hold',fig.width=12, fig.height =6)
+```
+Analysis of ligand-receptor interactions was done with the CellPhoneDB package, [Efremova et al, 2019](https://pubmed.ncbi.nlm.nih.gov/32103204/). The basic analysis was done in Python as described in the paper, whereafter the data were edited and plotted in R. In case of too many ligand_receptor pairs selection of relevant pairs was made. As in CellPhoneDB some pairs are given as receptor-ligand, this was manually  transformed to ligand_receptor by computation in excel. The order of clusters was edited to be the same as in other figures.
+
+Python and CellphoneDB were installed as  system resources, please see code.
+
+From the original seurat file a raw count file is generated with ensemble symbol  annotations and a metadata file with the cluster annotations. Start is: seu_2021_May.R generated and saved in CMC2.Rmd
+```{r}
+
+#install.packages(c("readxl","writexl")) 
+
+suppressPackageStartupMessages({
+library(igraph)
+library(ggplot2)
+library(biomaRt)
+library(Seurat)
+library(dplyr)  
+library(data.table)
+library(reshape2)
+library(openxlsx)
+library(readxl)
+library(xlsx)
+library(reshape2)
+library(data.table)
+#library(reticulate)
+library(writexl)
+})
+
+seu <-  readRDS('/Users/ChristerSylven/Desktop/CMC_ms/GitHub_code/seu_2021_May.R')
+#seu
+#names(seu[[]])
+#table(seu@meta.data$sub_cluster_SAN2) # SAN should be n=8
+```
+
+
+```{r}
+Idents(object = seu) <- "sub_cluster_SAN2"
+
+seu_Phone <- subset(x = seu, idents = c('M0','M1','M2','M3','M4', 'M5',  'M6',  'M7', 'SAN','0','2','3','4','6','7','9','10','12','14','15','16'))
+seu_Phone # all cell clusters except erythocytes
+#names(seu_Phone@meta.data)
+seu_Phone@meta.data$sub_cluster_SAN2 <- factor(seu_Phone@meta.data$sub_cluster_SAN2)
+table(seu_Phone@meta.data$sub_cluster_SAN2)
+```
+
+
+```{r}
+#count_raw <- seu@raw.data[,data_object@cell.names] 
+count_raw <- as.data.frame(GetAssayData(object = seu_Phone, slot = 'counts'))
+count_norm <- apply(count_raw, 2, function(x) (x/sum(x))*10000)
+counts <- count_norm
+
+ensembl = useMart("ensembl",dataset = "hsapiens_gene_ensembl")
+genes  <-  getBM(filters = 'hgnc_symbol',
+                 attributes = c('ensembl_gene_id','hgnc_symbol'),
+                 values = rownames(counts),
+                 mart = ensembl)
+
+counts <- counts[rownames(counts) %in% genes$hgnc_symbol,]
+
+counts <- tibble::rownames_to_column(
+  as.data.frame(counts), var = 'hgnc_symbol')
+
+counts <- plyr::join(counts, genes)
+
+counts$hgnc_symbol <- NULL
+
+counts <- cbind(counts[,which(colnames(counts) == 'ensembl_gene_id')], counts)
+
+colnames(counts)[1] <- 'Gene'
+counts$ensembl_gene_id <- NULL
+
+metadata <- data.frame(Cell = rownames(seu_Phone@meta.data),
+                       cell_type = Idents(object = seu_Phone))
+
+write.table(counts,
+            file = 'counts.txt',
+            quote = F,
+            col.names = T,
+            row.names = F,
+            sep = '\t')
+
+write.table(metadata,
+            file = 'metadata.txt',
+            quote = F,
+            col.names = T,
+            row.names = F,
+            sep = '\t')
+
+
+```
+Normalized counts (ensembl_gene_id) and metadata tables are formatted according to Cellphone DB
+CellphoneDB is then run
+and heatmap for all ligand_receptor interactions between all clusters generated in the user/out folder:
+```{r}
+#library(reticulate)
+Sys.setenv(RETICULATE_PYTHON = "/Users/ChristerSylven/Library/Python/3.8/bin/")
+
+# install cellphonedb as a system resource and use path as below
+system('python3 -m venv cpdb')
+system('source cpdb/bin/activate')
+system('pip3 install cellphonedb')
+#WARNING: The scripts f2py, f2py3 and f2py3.8 are installed in '/Users/ChristerSylven/Library/Python/3.8/bin' which is not on PATH.
+  #Consider adding this directory to PATH
+
+# use path above or use cellphone call without path directly in terminal after having installed cellphonedb
+#system('cellphonedb method statistical_analysis metadata.txt counts.txt --iterations=100 --threads=2 --result-precision 2 --output-path=/Users/ChristerSylven/Desktop/Space2/cellPhone/out/')
+# precision 2 & 100 iterations gives 2 decimal on pvalues
+
+# system('cellphonedb plot heatmap_plot metadata.txt' )
+# 
+#use  system('/Users/ChristerSylven/Library/Python/3.8/bin/cellphonedb plot heatmap_plot metadata_M7.txt')
+# plot <- "cellphonedb method statistical_analysis /Users/ChristerSylven/Desktop/Space2/cellPhone/Ground_metadata.txt /Users/ChristerSylven/Desktop/Space2/cellPhone/Ground_counts.txt --counts-data=gene_name --iterations=100 --threads=2 --result-precision 2 --output-path=/Users/ChristerSylven/Desktop/Space2/cellPhone/out/"
+
+# plot <- "cellphonedb method statistical_analysis /Users/ChristerSylven/Desktop/Space2/cellPhone/Flight_metadata.txt /Users/ChristerSylven/Desktop/Space2/cellPhone/Flight_counts.txt --counts-data=gene_name --iterations=100 --threads=2 --result-precision 2 --output-path=/Users/ChristerSylven/Desktop/Space2/cellPhone/out/"
+
+# plot <- "cellphonedb plot heatmap_plot /Users/ChristerSylven/Desktop/Space2/cellPhone/Ground_metadata.txt  --pvalues-path=/Users/ChristerSylven/Desktop/Space2/cellPhone/out/pvalues.txt --output-path=/Users/ChristerSylven/Desktop/Space2/cellPhone/out/"
+
+#plot <- "cellphonedb plot heatmap_plot /Users/ChristerSylven/Desktop/Space2/cellPhone/Flight_metadata.txt  --pvalues-path=/Users/ChristerSylven/Desktop/Space2/cellPhone/out/pvalues.txt --output-path=/Users/ChristerSylven/Desktop/Space2/cellPhone/out/"
+
+
+address <- "/Users/ChristerSylven/Library/Python/3.8/bin/"
+plot <- "cellphonedb plot heatmap_plot metadata_M7.txt"
+plot_address <- paste0(address, plot)
+plot_address
+system(plot_address)
+#system("/Users/ChristerSylven/Library/Python/3.8/bin/cellphonedb plot heatmap_plot metadata_M7.txt")
+```
+# All ligand_receptor interactions
+
+# Triangular heatmaps of interaction
+
+To show all ligand_receptor interactions between of non-CM cell types of relevance according to scRNAseq deconvolution on ST maps  in OFT (M7) and atrial Conduit (M5) and SAN cardiomyocyte containing spots, metafiles for these cell types are saved 
+
+```{r}
+#heatmap plot and count_network (table for heatmap) for subgroups
+# Metadata for groups
+metadata <- read.table('metadata.txt')
+colnames(metadata) <- metadata[1,]
+metadata <- metadata[-1,]
+
+cc <- c('M7', '2', '7', '6',  '0', '3', '15') # OFT v2
+metadata_M7 <- metadata[metadata$cell_type %in% cc,]
+metadata_M7[,2]  <- factor(metadata_M7[,2]) # delete cluster w zero cells
+write.table(metadata_M7,
+            file = 'metadata_M7.txt',
+            quote = F,
+           # col.names = T,
+            row.names = F,
+            sep = '\t')
+metadata <- read.table('/Users/ChristerSylven/metadata_M7.txt')
+table(metadata_M7[,2])
+```
+
+Following system('cellphonedb plot heatmap_plot metadata_M7.txt')
+
+the OFT heatmap and its count_network data are saved in the out folder
+
+to construct a triangular heatmap of interactions:
+
+### Figure 3C
+
+```{r, fig3C, fig.height = 6, fig.width = 6, fig.align = "center"}
+# heatmap with desired order of clusters
+
+# next run below to get SOURCE/TARGET order as in cc file
+# cellphonedb plot heatmap_plot metadata_M7.txt
+# or
+# cellphonedb plot heatmap_plot metadata_M5_SAN.txt
+#system('cellphonedb plot heatmap_plot metadata_M7.txt')
+
+count_network <- read.table('/Users/ChristerSylven/out/count_network.txt', header = TRUE)
+
+
+#OFT cc <- c('M7', '2', '7', '6',  '0', '3', '15')
+count_wide <- setDT(count_network %>% arrange(factor(SOURCE, levels = c('M7', '2', '7', '6',  '0', '3', '15'))))
+count_wide <- dcast(count_wide, factor(SOURCE, levels = unique(c('15','3', '0', '6', '7', '2', 'M7'))) ~ factor(TARGET, levels = unique(c('15','3', '0', '6', '7', '2', 'M7'))), value.var = 'count')
+count_wide <- count_wide[,-1]
+count_wide[lower.tri(-count_wide)] = NA
+
+
+cc <- c('OFT', 'Epicardium_d',  'Fb_smooth_m', 'Fb_l_vascular', 'Endothelium', 'Fb_skeleton', 'Schwann')
+
+colnames(count_wide) <-  rev(cc)
+count_wide$celltype <- rev(cc)
+count_wide2 <- count_wide
+
+count_wide2 <- na.omit(melt(count_wide2, 'celltype', variable='cohort'))
+count_wide2$cohort <- factor(count_wide2$cohort)
+count_wide2$celltype <- factor(count_wide2$celltype)
+
+#head(count_wide2)
+count_wide2$log <- log(count_wide2$value+1)
+
+ggplot(data = count_wide2) +
+  aes(x = cohort, y = celltype) +
+  ggtitle('') +
+  theme_bw() +
+  xlab('') +
+  ylab('') +
+  geom_tile(aes(fill = log), colour = "transparent") +
+  scale_fill_gradientn(colours = c("dodgerblue4", 'peachpuff', 'deeppink4')) +
+  scale_x_discrete(limits = cc,
+                   labels = cc) +
+  scale_y_discrete(limits = cc,
+                   labels = cc) +
+  theme(
+        axis.text.x = element_blank(), 
+        axis.text.y=element_text(size=12),
+        axis.ticks=element_blank(),
+        axis.line=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.border=element_blank()) +
+annotate("text", x = (1:length(levels(count_wide2$cohort))), y = 1:length(levels(count_wide2$cohort))- 0.75, label = rev(levels(count_wide2$cohort)), size=4, hjust = 1, angle = 90) +
+  coord_cartesian(ylim = c(8, -2), clip = "off")
+
+```
+
+In the same way, create a metadata file for atrial conduit, SAN and colocalized cell types  and generate count_network and triangular heatmap.
+
+```{r}
+metadata <- read.table('metadata.txt')
+colnames(metadata) <- metadata[1,]
+metadata <- metadata[-1,]
+
+cc <- c('M5','SAN', '0', '2', '6', '7', '12', '15')
+metadata_M5_SAN <- metadata[metadata$cell_type %in% cc,]
+metadata_M5_SAN [,2]  <- factor(metadata_M5_SAN [,2]) # delete cluster w zero cells
+write.table(metadata_M5_SAN,
+            file = 'metadata_M5_SAN.txt',
+            quote = F,
+            #col.names = T,
+            row.names = F,
+            sep = '\t')
+
+table(metadata_M5_SAN[,2])
+```
+
+
+###  Figure 4B
+
+```{r}
+plot <- "cellphonedb plot heatmap_plot metadata_M5_SAN.txt"
+plot_address <- paste0(address, plot)
+plot_address
+system(plot_address)
+```
+
+
+```{r, fig4B, fig.height = 6, fig.width = 6, fig.align = "center"}
+#system('cellphonedb plot heatmap_plot metadata_M5_SAN.txt')
+count_network <- read.table('/Users/ChristerSylven/out/count_network.txt', header = TRUE)
+count_network[,1] <- as.factor(count_network[,1] )
+count_network[,2] <- as.factor(count_network[,2])
+count_network$log_count <- log(count_network$count +1 )
+count_network$log_count2 <- count_network$log_count
+
+#count_network
+
+cc <-  c('M5','SAN', '6', '2', '3', '12', '4', '7')
+
+# to construct a triangular heatmap of interactions do:
+#Conduit + SAN
+count_wide <- setDT(count_network %>% arrange(factor(SOURCE, levels = cc)))
+count_wide <- dcast(count_wide, factor(SOURCE, levels = unique(c('15','12', '7', '6', '2', '0', 'SAN', 'M5'))) ~ factor(TARGET, levels = unique(c('15','12', '7', '6', '2', '0', 'SAN', 'M5'))), value.var = 'count')
+count_wide <- count_wide[,-1]
+count_wide[lower.tri(-count_wide)] = NA
+#count_wide
+
+cc <-  c('Conduit', 'SAN', 'Endothelium', 'Epicardium_d', 'Fb_l_vascular','Fb_smooth_m', 'Epicardium', 'Schwann')
+
+colnames(count_wide) <- rev(cc)
+count_wide$celltype <- rev(cc)
+count_wide2 <- count_wide
+
+
+#count_wide2
+
+count_wide2 <- na.omit(melt(count_wide2, 'celltype', variable='cohort'))
+count_wide2$cohort <- factor(count_wide2$cohort)
+count_wide2$celltype <- factor(count_wide2$celltype)
+
+#head(count_wide2)
+count_wide2$log <- log(count_wide2$value+1)
+
+ggplot(data = count_wide2) +
+  aes(x = cohort, y = celltype) +
+  ggtitle('') +
+  theme_bw() +
+  xlab('') +
+  ylab('') +
+  geom_tile(aes(fill = log), colour = "transparent") +
+  scale_fill_gradientn(colours = c("dodgerblue4", 'peachpuff', 'deeppink4')) +
+  scale_x_discrete(limits = cc,
+                   labels = cc) +
+  scale_y_discrete(limits = cc,
+                   labels = cc) +
+  theme(
+    axis.text.x = element_blank(), 
+    axis.text.y=element_text(size=12),
+    axis.ticks=element_blank(),
+    axis.line=element_blank(),
+    axis.title.x=element_blank(),
+    axis.title.y=element_blank(),
+    panel.border=element_blank()) +
+  annotate("text", x = (1:length(levels(count_wide2$cohort))), y = 1:length(levels(count_wide2$cohort))- 0.75, label = rev(levels(count_wide2$cohort)), size=4, hjust = 1, angle = 90) +
+  coord_cartesian(ylim = c(8, -2), clip = "off")
+```
+
+# Subgroup output
+
+The basic /out/means.txt & /out/pvalues.text are first pruned by deletion of duplicates
+
+Then the relation between integrin and non-integrin ligand_receptor pairs is plotted for interaction between different cardiomyocytes and cardiomyocytes and non-cardiomyocytes.
+
+## Integrins / non integrins
+
+### S Figure 4A
+
+```{r, fig4A, fig.height = 10, fig.width = 6, fig.align = "center"}
+
+#subgroup output
+means <-  read.delim("/Users/ChristerSylven/out/means.txt", check.names = FALSE)
+pvals <- read.delim("/Users/ChristerSylven/out/pvalues.txt", check.names = FALSE)
+#pval[pval==0] = 0.0009
+#dim(means)
+#dim(pvals)
+
+# delete duplicates of L_R / R_L interactoin pairs
+pvals0 <- pvals[!duplicated(pvals[,1]),]
+#pvals1 <- pvals[unique(pvals[,1]),]
+
+means0 <- means[!duplicated(means[,1]),]
+#dim(pvals0)
+#dim(means0)
+#add L_R / R_L interaction pairs as rowname
+rownames(pvals0) <- pvals0[,2]
+rownames(means0) <- means0[,2]
+#pvals0[1:2,1:10]
+#means0[1:2,1:10]
+# make dataframe w L_R R_L interaction pairs, secreted, mol 1 rec, mol 2 rec, integrin
+pvals_LR <- pvals0[,c(7:9,11)]
+pvals_LR <- cbind(rownames(pvals_LR), pvals_LR)
+colnames(pvals_LR)[1] <- 'L_R0'
+
+# to find number of interactions and number of integrin interactions for each muscle subtype and subset pvals0 below and get table on number of integrins
+
+is_integrin <- function(cell_interactions) {
+  pvals2 <- pvals0[,cell_interactions]
+  # keep L_R R_L interaction pair where any value in row has p value < 0.01
+  pvals3 <- pvals2[apply(pvals2, 1, function(x) any(-log10(x) > 2)), ]
+  t2<- sum(pvals_LR[rownames(pvals3),]$is_integrin == 'False')
+  t3 <- sum(pvals_LR[rownames(pvals3),]$is_integrin == 'True')
+  t1 <- t2 + t3
+ # t[1,1] <- t1
+  t[1,1] <- t2
+  t[1,2] <- t3
+  t <<- t # makes dataframe global
+}
+
+plot_interactions_integrins <- function(Number) {
+  
+  ordning <- c("Trabecular", "Compact", "Purkinje", "High G2M", "Exosome-related", 'OFT')
+  muscle_muscle <- data.frame(
+    Type = rep(c("nonintegrin", "integrin"), each = 6),
+    Cell_type = rep((ordning), 2),
+    Number = Number)
+  
+  ggplot(muscle_muscle, aes(x = Cell_type, y = Number)) +
+    geom_col(aes(fill = Type), width = 0.7) +
+    scale_fill_manual(values = c("#0073C2FF", "#EFC000FF")) + 
+    scale_x_discrete(limits = ordning, labels = ordning) +
+    ylim(0, 275) +
+    theme(
+      axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0, size = 32),
+          axis.text.y = element_text(size = 32), legend.text =  element_text(size = 32),
+          axis.title.x=element_blank(),
+          axis.title.y=element_blank(),
+      legend.title = element_text(size=24)
+         # axis.text.x=element_blank(),
+         # legend.position="none"
+          )
+}
+
+#theme(axis.line=element_blank(),
+     # axis.text.x=element_blank(),
+      #axis.text.y=element_blank(),
+      #axis.ticks=element_blank(),
+      #axis.title.x=element_blank(),
+      #axis.title.y=element_blank(),
+      
+Muscle_Muscle <- data.frame(
+  M0 = c( 'M1|M0', 'M2|M0',  'M4|M0',  'M6|M0', 'M7|M0',  'M0|M1', 'M0|M2',  'M0|M4', 'M0|M6', 'M0|M7'),
+M1 = c( 'M0|M1', 'M2|M1',  'M4|M1',  'M6|M1', 'M7|M1',  'M1|M0', 'M1|M2',  'M1|M4', 'M1|M6', 'M1|M7'),
+M2  = c( 'M0|M2', 'M2|M2',  'M4|M2',  'M6|M2', 'M7|M2',  'M2|M0', 'M2|M1',  'M2|M4', 'M2|M6', 'M2|M7'),
+M4 = c( 'M0|M4', 'M1|M4',  'M2|M4',  'M6|M4', 'M7|M4',  'M4|M0', 'M4|M1',  'M4|M2', 'M4|M6', 'M4|M7'),
+M6 = c( 'M0|M6', 'M1|M6',  'M2|M6',  'M4|M6', 'M7|M6',  'M6|M0', 'M6|M1',  'M6|M2', 'M6|M4', 'M6|M7'),
+M7 =c( 'M0|M7', 'M1|M7',  'M2|M7',  'M4|M7', 'M6|M7',  'M7|M0', 'M7|M1',  'M7|M2', 'M7|M4', 'M7|M6')
+)
+
+t <- data.frame()
+T <- data.frame()
+for (i in 1:6) {
+  is_integrin( Muscle_Muscle[,i])
+  T <- rbind(T, t)
+}
+
+
+colnames(T) <- c('non_integrins', 'integrins')
+T$clusters <- c('M0', 'M1', 'M2', 'M4', 'M6', 'M7')
+#T
+T2 <- melt(as.data.table(T), id = 'clusters')
+#plot_interactions_integrins(T2$value)
+
+ordning <- c("Trabecular", "Compact", "Purkinje", "High G2M", "Exosome-related", 'OFT')
+muscle_muscle <- data.frame(
+  Type = rep(c("nonintegrin", "integrin"), each = 6),
+  Cell_type = rep((ordning), 2),
+  Number = T2$value)
+
+p1 <- ggplot(muscle_muscle, aes(x = Cell_type, y = Number)) +
+  geom_col(aes(fill = Type), width = 0.7) +
+  scale_fill_manual(values = c("#0073C2FF", "#EFC000FF")) + 
+  scale_x_discrete(limits = ordning, labels = ordning) +
+  ylim(0, 275) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0, size = 24),
+    axis.text.y = element_text(size = 32), legend.text =  element_text(size = 24),
+    axis.title.x=element_blank(),
+    axis.title.y=element_blank(),
+    legend.title = element_text(size=24),
+    # axis.text.x=element_blank(),
+    legend.position="none"
+  )
+ 
+# Total /Integrin to non CM
+# M0 -> M7
+
+Muscle <- data.frame(
+  M0 = c('0|M0', '2|M0', '3|M0', '4|M0', '6|M0', '7|M0', '9|M0', '10|M0', '12|M0', '15|M0', '16|M0', 'M0|0', 'M0|2', 'M0|2', 'M0|4', 'M0|6', 'M0|7', 'M0|9', 'M0|10', 'M0|12', 'M0|15', 'M0|16'),
+  M1 = c('0|M1', '2|M1', '3|M1', '4|M1', '6|M1', '7|M1', '9|M1', '10|M1', '12|M1', '15|M1', '16|M1', 'M1|0', 'M1|2', 'M1|2', 'M1|4', 'M1|6', 'M1|7', 'M1|9', 'M1|10', 'M1|12', 'M1|15', 'M1|16'),
+  M2  = c('0|M2', '2|M2', '3|M2', '4|M2', '6|M2', '7|M2', '9|M2', '10|M2', '12|M2', '15|M2', '16|M2', 'M2|0', 'M2|2', 'M2|2', 'M2|4', 'M2|6', 'M2|7', 'M2|9', 'M2|10', 'M2|12', 'M2|15', 'M2|16'),
+  M4 = c('0|M4', '2|M4', '3|M4', '4|M4', '6|M4', '7|M4', '9|M4', '10|M4', '12|M4', '15|M4', '16|M4', 'M4|0', 'M4|2', 'M4|2', 'M4|4', 'M4|6', 'M4|7', 'M4|9', 'M4|10', 'M4|12', 'M4|15', 'M4|16'),
+  M6 = c('0|M6', '2|M6', '3|M6', '4|M6', '6|M6', '7|M6', '9|M6', '10|M6', '12|M6', '15|M6', '16|M6', 'M6|0', 'M6|2', 'M6|2', 'M6|4', 'M6|6', 'M6|7', 'M6|9', 'M6|10', 'M6|12', 'M6|15', 'M6|16'),
+  M7 =c('0|M7', '2|M7', '3|M7', '4|M7', '6|M7', '7|M7', '9|M7', '10|M7', '12|M7', '15|M7', '16|M7', 'M7|0', 'M7|2', 'M7|2', 'M7|4', 'M7|6', 'M7|7', 'M7|9', 'M7|10', 'M7|12', 'M7|15', 'M7|16')
+)
+
+t <- data.frame()
+T <- data.frame()
+for (i in 1:6) {
+  is_integrin( Muscle[,i])
+  T <- rbind(T, t)
+}
+colnames(T) <- c('non-integrins', 'integrins')
+T$clusters <- c('M0', 'M1', 'M2', 'M4', 'M6', 'M7')
+#T
+T2 <- melt(as.data.table(T), id = 'clusters')
+#plot_interactions_integrins(T2$value)
+
+muscle_muscle <- data.frame(
+  Type = rep(c("nonintegrin", "integrin"), each = 6),
+  Cell_type = rep((ordning), 2),
+  Number = T2$value)
+
+p2 <- ggplot(muscle_muscle, aes(x = Cell_type, y = Number)) +
+  geom_col(aes(fill = Type), width = 0.7) +
+  scale_fill_manual(values = c("#0073C2FF", "#EFC000FF")) + 
+  scale_x_discrete(limits = ordning, labels = ordning) +
+  ylim(0, 275) +
+  theme(
+    #axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0, size = 32),
+    axis.text.x = element_blank(),
+    axis.text.y = element_text(size = 24), legend.text =  element_text(size = 24),
+    axis.title.x=element_blank(),
+    axis.title.y=element_blank(),
+    legend.title = element_text(size=24),
+    # axis.text.x=element_blank(),
+    legend.position="top"
+  )
+
+p2/p1
+```
+
+To find Ligand_receptor  dotplot according to cellphone DB and then edit results for 
+
+1) selected top LR pairs
+
+2) rearrange so that pairs are shown as L-R and not R_L and make dotplot. 
+
+1. Plot as out/cellphoneDB plot and decide which pairs are top pairs
+
+2. If out/cellphoneDB only show limited interactions as for M6, M7 analysis and ordering can be made directly manually.
+
+## OFT and its interactions
+
+system('cellphonedb plot dot_plot --rows in/OFT_pvals2_Nov_rows.txt --columns in/OFT_Nov.txt --output-name OFT_Nov.png')
+
+OFT_Nov.png saved in out folder with only 27 interactions, no selection is needed 
+
+```{r}
+#,2, 7, 6,  0, 3, 15 
+OFT <- c('2|M7', '7|M7', '6|M7', '0|M7', '3|M7', '15|M7', 'M7|2', 'M7|7', 'M7|6', 'M7|0', 'M7|3', 'M7|15')
+write.table(OFT, file = '/Users/ChristerSylven/in/OFT_Nov.txt', sep = '\t', quote = F, row.names = F, col.names = F)
+
+pvals2 <- pvals0[,OFT]
+# to minimze number of interactions, filtered to those with p<0.01
+pvals3 <- pvals2[apply(pvals2, 1, function(x) any(-log10(x) > 2)), ]
+means3 <- means0[rownames(pvals3),OFT]
+dim(pvals3) # 27 12
+
+write.table(rownames(pvals3), '/Users/ChristerSylven/in/OFT_pvals2_Nov_rows.txt', sep = '\t', quote = F, row.names = F, col.names = F)
+OFT <- c('2|M7', '7|M7', '6|M7', '0|M7', '3|M7', '15|M7', 'M7|2', 'M7|7', 'M7|6', 'M7|0', 'M7|3', 'M7|15')
+
+
+pvals4_calc <- function(name, LRmrna, LRcells )
+{
+  pvals2 <- pvals0[,LRcells] #pval0 duplicates eliminated above
+  pvals3 <- pvals2[apply(pvals2, 1, function(x) any(-log10(x) > 2)), ]
+  pvals3 <- pvals3[LRmrna,]
+  means3 <- means0[rownames(pvals3), LRcells]
+  pvals_LR_rows <- pvals_LR[rownames(pvals3),]
+  pvals4 <- cbind(pvals3,pvals_LR_rows)
+  means4 <- cbind(means3,pvals_LR_rows)
+  writexl::write_xlsx(pvals4, paste0("pvals4_d_", name, ".xlsx"))
+ writexl::write_xlsx(means4, paste0("means4_d_", name, ".xlsx"))
+}
+
+pvals4_calc('OFT_TOP', rownames(pvals3), OFT)
+```
+
+Edit in excel. Change RL to LR into L_R column. Change values accordingly. 
+
+For those changed correct mean molecule1/molecule2 in excel  to molecule2/molecule1 (1/value)
+
+Save as b for both corrected pvals and means files with all pairs as L_R.
+
+###  Figure 3D
+```{r}
+pvals4b <- read_xlsx('/Users/ChristerSylven/pvals4_d_OFT_TOPb.xlsx')
+means4b <- read_xlsx('/Users/ChristerSylven/means4_d_OFT_TOPb.xlsx')
+# edit which pairs and order
+#namn_OFT <- c(8:10,12,13:23,27, 24:25,28:30)
+
+# function for manual dotplot, order and edited L_R pairs given by namn, default all LR pairs in 4b files
+dotplot_LR <- function(pvals4b, means4b, L_Rs, namn = c(1:dim(pvals4b)[1]))
+{
+pvals4b <- as.data.frame(pvals4b)
+means4b <- as.data.frame(means4b)
+rownames(pvals4b) <- pvals4b[,18]
+pvals4b <- pvals4b[,c(18, 1:12)]
+pvals4b[pvals4b==0] = 0.0009
+
+means4b <- means4b[,c(18, 1:12)]
+means4b[means4b==0] = 1
+pvals4b <- pvals4b[namn,]
+means4b <- means4b[namn,]
+
+pvals5 <- reshape2::melt(pvals4b, id=c('L_R'))
+means5 <- reshape2::melt(means4b, id = c('L_R'))
+
+level1 <- pvals5[1:dim(pvals4b)[1],1]
+plot.data = cbind(pvals5,log2(means5[,3]))
+
+colnames(plot.data) = c('pair', 'clusters', 'pvalue', 'mean')
+
+my_palette <- colorRampPalette(c("black", "blue", "yellow", "red"), alpha=TRUE)(n=399)
+#my_palette <- colorRampPalette(c("blue", "red"), alpha=TRUE)(n=399)
+
+p <- ggplot2::ggplot(plot.data,aes(x=clusters,y=pair)) +
+  geom_point(aes(size=-log10(pvalue),color=mean)) +
+  scale_color_gradientn('Log2 mean (Ligand_receptor)', colors=my_palette) +
+  scale_y_discrete(limits = level1,
+                   labels = level1)+
+  theme_bw() +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(),
+        axis.text=element_text(size=12, colour = "black"),
+        axis.text.x = element_text(angle = 90, face = 'italic', hjust = 1, vjust=1),
+        axis.text.y = element_text(size=12,  colour = "black"),
+        axis.title=element_blank(),
+        panel.border = element_rect(size = 0.7, linetype = "solid", colour = "black"),
+        legend.position="top",
+        plot.margin = unit(c(0.1,1,0,2), "cm")) +
+        scale_x_discrete(
+          labels = L_Rs) +
+coord_flip()
+
+ggsave("/Users/ChristerSylven/Desktop/CMC_ms/GitHub_code/non_Cond_SAN_CM_L_R.pdf", p, height = 10, width = 12,  device = "pdf")
+
+p
+}
+
+L_Rs_OFT <- c("Epicardium_d~OFT",
+"Fb_smooth_m~OFT",
+"Fb_l_vascular~OFT",
+"Endothelium~OFT",
+"Fb_skeleton~OFT",
+"Schwann~OFT", 
+"OFT~Epicardium_d",
+"OFT~Fb_smooth_m",
+"OFT~Fb_l_vascular",
+"OFT~Endothelium",
+"OFT~Fb_skeleton",
+"OFT~Schwann")
+
+dotplot_LR(pvals4b, means4b, L_Rs_OFT)
+
+```
+
+## Exosome-enriched interactions
+
+```{r}
+EXO <- c('2|M6', '7|M6', '6|M6', '0|M6', '3|M6', '15|M6', 'M6|2', 'M6|7', 'M6|6', 'M6|0', 'M6|3', 'M6|15')
+write.table(EXO, file  = '/Users/ChristerSylven/in/EXO_Nov.txt', sep = '\t', quote = F, row.names = F, col.names = F)
+pvals2 <- pvals0[,EXO]
+# to minimze number of interactions, filtered to those with p<0.01
+pvals3 <- pvals2[apply(pvals2, 1, function(x) any(-log10(x) > 2)), ]
+means3 <- means0[rownames(pvals3),EXO]
+dim(pvals3) # 31 12
+
+write.table(rownames(pvals3), '/Users/ChristerSylven/in/EXO_pvals2_Nov_rows.txt', sep = '\t', quote = F, row.names = F, col.names = F)
+
+
+pvals4_calc('EXO_TOP', rownames(pvals3), EXO)
+```
+system('cellphonedb plot dot_plot --rows in/EXO_pvals2_Nov_rows.txt --columns in/EXO_Nov.txt --output-name EXO_Nov.png')
+
+###  S Figure 4B
+
+```{r}
+# edit in excel. Change RL to LR into L_R column. Change values accordingly. Save as b for both files.
+# Correct mean molecule1/molecule2 in excel with  to molecule2/molecule1 (1/value)
+# 
+#corrected files with all pairs as L_R saved as c
+pvals4b <- read_xlsx('/Users/ChristerSylven/pvals4_d_EXO_TOPb.xlsx')
+means4b <- read_xlsx('/Users/ChristerSylven/means4_d_EXO_TOPb.xlsx')
+
+L_Rs_EXO <- c("Epicardium_d~EXO",
+"Fb_smooth_m~EXO",
+"Fb_l_vascular~EXO",
+"Endothelium~EXO",
+"Fb_skeleton~EXO",
+"Schwann~EXO", 
+"EXO~Epicardium_d",
+"EXO~Fb_smooth_m",
+"EXO~Fb_l_vascular",
+"EXO~Endothelium",
+"EXO~Fb_skeleton",
+"EXO~Schwann")
+#Edited L_R order:
+namn_exo <- c(2:19,23:25,22, 28:29,20:21,27,30,32:33,26,31)
+dotplot_LR(pvals4b, means4b, L_Rs_EXO)
+
+
+```
+
+## Atrial conduit & SAN  interactions
+
+plotted as two plots:  non-CM to CM cells and CM to non-CM cells.
+
+non-CM to CM
+number of ligand_receptor pairs
+
+```{r}
+ALL_Cond_SAN <- c('0|M5', '2|M5', '6|M5', '7|M5', '12|M5',  '15|M5',  '0|SAN', '2|SAN', '6|SAN', '7|SAN', '12|SAN', '15|SAN')
+Cond_SAN_ALL <- c('M5|0', 'M5|2', 'M5|6', 'M5|7', 'M5|12', 'M5|15','SAN|0', 'SAN|2', 'SAN|6', 'SAN|7', 'SAN|12', 'SAN|15')
+write.table(ALL_Cond_SAN, file = '/Users/ChristerSylven/in/ALL_Cond_SAN_Nov.txt', sep = '\t', quote = F, row.names = F, col.names = F)
+write.table(Cond_SAN_ALL, file  = '/Users/ChristerSylven/in/Cond_SAN_ALL_Nov.txt', sep = '\t', quote = F, row.names = F, col.names = F)
+
+pvals2 <- pvals0[,Cond_SAN_ALL]
+# to minimze number of interactions, filtered to those with p<0.01
+pvals3 <- pvals2[apply(pvals2, 1, function(x) any(-log10(x) > 2)), ]
+means3 <- means0[rownames(pvals3),Cond_SAN_ALL]
+
+nrow(pvals3)
+
+write.table(rownames(pvals3), '/Users/ChristerSylven/in/Cond_SAN_ALL_pvals2_Nov_rows.txt', sep = '\t', quote = F, row.names = F, col.names = F)
+```
+system('cellphonedb plot dot_plot --rows in/Cond_SAN_ALL_pvals2_Nov_rows.txt --columns in/Cond_SAN_ALL_Nov.txt --output-name Cond_SAN_ALL_Nov.png')
+
+
+CM to non-CM
+number of ligand_receptor pairs
+
+```{r}
+pvals2 <- pvals0[,ALL_Cond_SAN]
+# to minimze number of interactions, filtered to those with p<0.01
+pvals3 <- pvals2[apply(pvals2, 1, function(x) any(-log10(x) > 2)), ]
+means3 <- means0[rownames(pvals3),ALL_Cond_SAN]
+
+nrow(pvals3)
+
+write.table(rownames(pvals3), '/Users/ChristerSylven/in/ALL_Cond_SAN_pvals2_Nov_rows.txt', sep = '\t', quote = F, row.names = F, col.names = F)
+```
+Too many ligand_receptor pairs. Selection of top pairs
+
+
+
+In order to edit so that all pairs are annotated as L_R and not R_L
+produce xlsx files as below and edit. R_L becomes L_R in the CONDUIT_SAN_TOP and vice versa. For means the ratio has to be changed by 1/value. Edited xlsx files are saved with suffix b and then opened to make the ggplot manually.
+
+
+system('cellphonedb plot dot_plot --rows in/COND_SAN_ALL_TOP_May_rows.txt --columns in/Cond_SAN_all_May.txt --output-name Cond_SAN_TOP_all_May.png')
+
+###  Figure 4C
+
+```{r}
+COND_SAN_ALL_TOP <- c(
+  'COL11A2_a1b1 complex',
+  'COL18A1_a10b1 complex',
+  'COL4A1_a1b1 complex',
+  'COL4A6_a10b1 complex',
+  'CADM3_NECTIN3',
+  'CADM1_NECTIN3',
+  'CADM3_CADM1',
+  'CADM1_CADM1',
+  'CADM3_CADM4',
+  'CADM3_EPB41L1',
+  'FGF7_FGFR3',
+  'TGFB2_TGFBR3',
+  'TGFB2_TGFbeta receptor2',
+  'MIF_TNFRSF14',
+  'BMR1A_AVR2B_GDF6',
+  'BMPR1A_BMPR2_GDF6',
+  'BMR1A_AVR2B_BMP4',
+  'BMPR1A_BMPR2_BMP4',
+  'ADGRL1_NRG1',
+  'EGFR_TGFB1',
+  'EGFR_MIF',
+  'EGFR_GRN',
+  'BDNF_F11R',
+  'WNT5A_FZD1',
+  'WNT5A_FZD2',
+  'WNT5A_FZD3',
+  'WNT5A_EPHA7',
+  'WNT5A_ROR2',
+  'WNT5A_ANTXR1',
+  'WNT5A_PTPRK',
+  'GDF11_ANTXR1',
+  'PDGFB_PDGFRB',
+  'PDGFB_PDGFRA',
+  'PDGFA_PDGFRA',
+  'VEGFA_KDR',
+  'NPPA_NPR3',
+  'NPPA_NPR1'
+  )
+
+write.table(COND_SAN_ALL_TOP, '/Users/ChristerSylven/in/COND_SAN_ALL_TOP_May_rows.txt', sep = '\t', quote = F, row.names = F, col.names = F)
+
+pvals4_calc('COND_SAN_ALL_TOP', COND_SAN_ALL_TOP, Cond_SAN_ALL)
+
+L_Rs_COND_SAN_nonCM <- c(
+"Conduit~Endothelium",
+"Conduit~Epicardium_d",
+"Conduit~Fb_l_vascular",
+"Conduit~Fb_smooth_m",
+"Conduit~Epicardium",
+"Conduit~Schwann", 
+"SAN~Endothelium",
+"SAN~Epicardium_d",
+"SAN~Fb_l_vascular",
+"SAN~Fb_smooth_m",
+"SAN~Epicardium",
+"SAN~Schwann" 
+)
+
+# edit in excel and save as _c
+pvals4b <- read_xlsx('/Users/ChristerSylven/pvals4_d_COND_SAN_ALL_TOPb.xlsx')
+means4b <- read_xlsx('/Users/ChristerSylven/means4_d_COND_SAN_ALL_TOPb.xlsx')
+dotplot_LR(pvals4b, means4b,L_Rs_COND_SAN_nonCM)
+```
+system('cellphonedb plot dot_plot --rows in/ALL_CONDUIT_SAN_TOP_Oct_rows.txt --columns in/ALL_Cond_SAN_Oct.txt --output-name ALL_Cond_SAN_TOP_Oct.png')
+
+### Figure 4D
+```{r}
+# from the output choice of those to display in figure
+
+ALL_CONDUIT_SAN_TOP <-
+c( 
+  'COL2A1_a10b1 complex',
+  'COL3A1_a10b1 complex',
+  'COL8A2_a10b1 complex',
+  'COL4A6_a10b1 complex',
+  'COL9A3_a1b1 complex',
+  'TGFB3_TGFbeta receptor2',
+  'BMPR1A_BMPR2_BMP4',
+  'BMPR1A_BMPR2_BMP5',
+  'ACVR1_BMPR2_BMP5',
+  'BMPR1A_BMPR2_BMP7',
+  'ACVR1_BMPR2_BMP7',
+  'NOTCH1_JAG1',
+  'NOTCH1_DLL3',
+  'NOTCH2_DLL3',
+  'LAMA3_a3b1 complex',
+  'LAMC1_a7b1 complex',
+  'FGF10_FGFR2',
+  'EFNA1_EPHA4',
+  'RSPO1_LGR4',
+  'CSF1_SIRPA',
+  'NRG1_LGR4',
+  'IL1B_ADRB2',
+  'TEK_ANGPT1'
+)
+
+write.table(ALL_CONDUIT_SAN_TOP, '/Users/ChristerSylven/in/ALL_CONDUIT_SAN_TOP_OCT_rows.txt', sep = '\t', quote = F, row.names = F, col.names = F)
+
+pvals4_calc('ALL_Cond_SAN_TOP', ALL_CONDUIT_SAN_TOP, ALL_Cond_SAN)
+
+pvals4b <- read_xlsx('/Users/ChristerSylven/pvals4_d_ALL_COND_SAN_TOPb.xlsx')
+means4b <- read_xlsx('/Users/ChristerSylven/means4_d_ALL_COND_SAN_TOPb.xlsx')
+
+L_Rs_nonCM_COND_SAN <- c(
+"Endothelium~Conduit",
+"Epicardium_d~Conduit",
+"Fb_l_vascular~Conduit",
+"Fb_smooth_m~Conduit",
+"Epicardium~Conduit",
+"Schwann~Conduit",
+"Endothelium~SAN",
+"Epicardium_d~SAN",
+"Fb_l_vascular~SAN",
+"Fb_smooth_m~SAN",
+"Epicardium~SAN",
+"Schwann~SAN" 
+)
+
+dotplot_LR(pvals4b, means4b, L_Rs_nonCM_COND_SAN)
+```
+
+
+# sessionInfo()
+```{r}
+sessionInfo()  
+```
+
