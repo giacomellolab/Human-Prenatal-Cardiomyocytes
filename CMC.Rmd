@@ -206,7 +206,6 @@ seu_Muscle <- FindNeighbors(seu_Muscle, dims = 1:30, verbose = FALSE)
 seu_Muscle <- FindClusters(seu_Muscle, resolution = 0.75, verbose = FALSE)
 seu_Muscle <- RunUMAP(seu_Muscle, dims = 1:30, verbose = FALSE)
 D2 <- DimPlot(seu_Muscle, reduction = "umap", cols = alpha(fill4, 0.60), pt.size = 2.0, label='F')  + ggtitle('pcs = 25') &  NoAxes()  &  NoLegend()
-
 ```
 
 
@@ -223,6 +222,7 @@ Idents(seu_Muscle) <- 'ClusterNames'
 D3 <- DimPlot(seu_Muscle, reduction = "umap", cols = alpha(fill4, 0.60), pt.size = 2.0, label='F')  + ggtitle('pcs = 35') & NoAxes()
 D2 + D1 + D3
 
+
 ```
 
 ### Figure 1B
@@ -231,6 +231,7 @@ D2 + D1 + D3
 
 # calculate number of RP genes in the different clusters
 Idents(seu_Muscle) <- 'ClusterNames'
+
 seu_Muscle.markers <- FindAllMarkers(seu_Muscle, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
 
 
@@ -476,7 +477,7 @@ saveRDS(seu_Muscle, file = paste0(path1, 'seu_Muscle_2021_May.R'))
 
 #seu <- readRDS(paste0(path1, 'seu_2021_May.R'))
 Idents(seu) <- 'SCT_snn_res.0.38'
-#seu_Muscle <- readRDS(paste0(path1,'seu_Muscle_2021_May.R'))
+seu_Muscle <- readRDS(paste0(path1,'seu_Muscle_2021_May.R'))
 #names(seu_Muscle[[]])
 #Idents(seu_Muscle) <- "SCT_snn_res.0.7" # original in Seurat
 #Idents(seu_Muscle) <- "sub_cluster_SAN" # with SAN added
@@ -534,7 +535,7 @@ markers_Muscle <- extractTopN(seu_Muscle.markers, N = 12) # for Ventricle n = 12
 options(repr.plot.width = 10, repr.plot.height = 20)
 
 
-markers_Muscle$cluster <- as.character(markers_Muscle$cluster) 
+
 
 markers_Muscle <- data.frame(markers_Muscle[,c(6:7, 5, 2)])
 #markers_Muscle
@@ -584,52 +585,13 @@ d
 
 ```
 
-## Dotplot for atrial DE genes
 
-
-```{r}
-#DotPlot for Atria
-markers_Muscle <- extractTopN(seu_Muscle.markers, N = 18) # for Atria n = 18
-markers_Muscle$cluster <- as.character(markers_Muscle$cluster) 
-
-markers_Muscle <- data.frame(markers_Muscle[,c(6:7, 5, 2)])
-
-#Atria <- readRDS('Atria_July21.R')
-Atria2 <- c(3,5,8)
-markers_Muscle_Atria <- filter(markers_Muscle, cluster %in%  Atria2)
-markers_Muscle_Atria.to.plot <- unique(markers_Muscle_Atria$gene)
-
-
-d <- DotPlot(object = Atria,  features = markers_Muscle_Atria.to.plot, dot.scale = 4, group.by ='sub_cluster_SAN') + 
-  #scale_colour_gradientn(colors = heat_cols) +
-  scale_y_discrete(name  = "", 
-                   labels = c("Trabecular", "Conduit", "SAN")) +
-  theme(legend.position = 'top', text = element_text(size =10), axis.text.x = element_text(size = 10, angle = -45, hjust = 0,vjust = 1), plot.margin = unit(c(0.5,1,0,0), "cm")) +
-  xlab('  ')
-
-d +
-  annotate ("rect", xmin = 18.5, xmax = 33.5, ymin = 0, ymax = 3.5, alpha = .1, fill = "blue")
-```
-
-## Heatmap
-
-
-```{r, fig heat_atria, fig.height = 7.5, fig.width = 4.5, fig.align = "center"}
-
-Idents(Atria) <- 'sub_cluster_SAN2'
-
-d_a <- DoHeatmap(object = Atria,  features = markers_Muscle_Atria.to.plot, angle = 90, size = 4)  + NoLegend() 
-
-#ggsave(d_a, filename = paste0(path1, "Figures/heatmap_atria.svg"),  width = 6, height = 22,  device = "svg", units = "cm")
-
-d_a
-```
-
-## DE genes for atria with SHOX2, TBX18 and HCN4 removed
 
 ### Figure S3A
 
-```{r, fig heat_atria2, fig.height = 7.5, fig.width = 10, fig.align = "center"}
+### DE genes for atria with SHOX2, TBX18 and HCN4 removed
+
+```{r}
 library(Seurat)
 
 
@@ -648,44 +610,51 @@ markers_Atrium_minus  <- data.frame(markers_Atrium_minus[,c(6:7, 5, 2)])
 #Atria <- readRDS('Atria_July21.R')
 Atria2 <- c(3,5,8)
 
-Atrium_minus <- subset(Atrium_minus, idents = Atria2)
-markers_Atrium_minus <- filter(markers_Atrium_minus, cluster %in%  Atria2)
-markers_Atrium_minus.to.plot <- unique(markers_Atrium_minus$gene)
+Atrium_minus2 <- subset(Atrium_minus, idents = Atria2)
 
-c <- markers_Atrium_minus.to.plot 
+ #Atrium_minus2.markers <- FindAllMarkers(Atrium_minus2, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+ #Atrium_minus2.markers  <- extractTopN(Atrium_minus2.markers, N = 18) # for Atria n = 18
+ #Atrium_minus2.markers$cluster <- as.character(Atrium_minus2.markers$cluster) 
+
+#Atrium_minus2.markers  <- data.frame(Atrium_minus2.markers[,c(6:7, 5, 2)])
+ #Atrium_minus2.markers[,1] <- as.numeric(Atrium_minus2.markers[,1])
+#R2<- Atrium_minus2.markers[order(-Atrium_minus2.markers[,1], Atrium_minus2.markers[,3]), ]
+
+markers_Atrium_minus2 <- filter(markers_Atrium_minus, cluster %in%  Atria2)
+
+markers_Atrium_minus2[,1] <- as.numeric(markers_Atrium_minus2[,1])
+
+markers_Atrium_minus2<- markers_Atrium_minus2[order(-markers_Atrium_minus2[,1], markers_Atrium_minus2[,3]), ]
+markers_Atrium_minus2 <- subset(markers_Atrium_minus2, p_val_adj<0.05)
+
+markers_Atrium_minus2.to.plot <- unique(markers_Atrium_minus2$gene)
+
+c <- markers_Atrium_minus2.to.plot 
+c < factor(c, levels = c)
 
 
-d2 <- DotPlot(object = Atrium_minus,  features = c, dot.scale = 4, group.by ='sub_cluster_SAN') + 
+d2 <- DotPlot(object = Atrium_minus2,  features = rev(c), dot.scale = 4, group.by ='sub_cluster_SAN') + 
   #scale_colour_gradientn(colors = heat_cols) +
   scale_y_discrete(name  = "", 
                    labels = c("Trabecular", "Conduit", "SAN")) +
-  theme(legend.position = '', text = element_text(size =10), axis.text.x = element_text(size = 10, angle = -45, hjust = 0,vjust = 1), plot.margin = unit(c(0.5,1,0,0), "cm")) +
+  theme(legend.position = 'top', text = element_text(size =10), axis.text.x = element_text(size = 10, angle = -45, hjust = 0,vjust = 1), plot.margin = unit(c(0.5,1,0,0), "cm")) +
   xlab('  ')
 
-#d3 <- d +  annotate ("rect", xmin = 18.5, xmax = 33.5, ymin = 0, ymax = 3.5, alpha = .1, fill = "blue") 
-#d4 <- d2 +
- # annotate ("rect", xmin = 18.5, xmax = 32.5, ymin = 0, ymax = 3.5, alpha = .1, fill = "blue") 
-#
+#d3 <- d2 +  annotate ("rect", xmin = 18.5, xmax = 33.5, ymin = 0, ymax = 3.5, alpha = .1, fill = "blue") 
+d4 <- d2 +
+  annotate ("rect", xmin = 14.5, xmax = 30.5, ymin = 0, ymax = 3.5, alpha = .1, fill = "blue") 
+
 #d3  / d4 
+d4
 
-d2 + annotate ("rect", xmin = 18.5, xmax = 32.5, ymin = 0, ymax = 3.5, alpha = .1, fill = "blue") 
+Idents(Atrium_minus2) <- 'sub_cluster_SAN2'
 
-```
+d_a <- DoHeatmap(object = Atrium_minus2,,  features = rev(c), angle = 90, size = 4)  + NoLegend() 
 
-## Heatmap
-### Figure S3B
-
-```{r, fig heat_atria3, fig.height = 7.5, fig.width = 4.5, fig.align = "center"}
-
-Idents(Atria) <- 'sub_cluster_SAN2'
-
-d_a <- DoHeatmap(object = Atrium_minus,  features = markers_Atrium_minus.to.plot , angle = 90, size = 4)  + NoLegend() 
-
-#ggsave(d_a, filename = paste0(path1, "Figures/heatmap_atria_minus.svg"),  width = 6, height = 22,  device = "svg", units = "cm")
+ggsave(d_a, filename = "/Users/ChristerSylven/Desktop/CMC_ms/aMS/Final/Nov_figs/heatmap_atria_minus.svg",  width = 6, height = 22,  device = "svg", units = "cm")
 
 d_a
 ```
-
 
 ## Ventricular base, cell cycle phase fractions, mitochondrial and MYH7 and GJA1 variabilities
 
